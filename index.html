@@ -76,7 +76,8 @@
 
   /* ---------- scroll track ---------- */
 
-  .spacer { height: 1250vh; }
+  /* the last ~100vh is still room held for content that comes later */
+  .spacer { height: 1350vh; }
   body:not(.ready) .spacer { height: 0; }
 
   /* ---------- overlays ---------- */
@@ -228,8 +229,9 @@
   var lastOpacity   = [];
   for (var k = 0; k < COUNT; k++) { lastTransform[k] = ''; lastOpacity[k] = -1; }
 
-  var maxScroll   = 1;
-  var lastHeight  = 0;
+  var maxScroll     = 1;
+  var journeyScroll = 1;
+  var lastHeight    = 0;
   var lastT       = -1;
   var lastActive  = -1;
   var hintGone    = false;
@@ -244,7 +246,10 @@
       body ? body.scrollHeight : 0,
       body ? body.offsetHeight : 0
     );
-    maxScroll  = Math.max(1, h - window.innerHeight);
+    maxScroll = Math.max(1, h - window.innerHeight);
+    /* the journey completes one viewport short of the bottom; the last
+       ~100vh holds the twelfth image still */
+    journeyScroll = Math.max(1, maxScroll - window.innerHeight);
     lastHeight = window.innerHeight;
     lastT      = -1; // force a repaint against the new metrics
   }
@@ -266,23 +271,27 @@
     if (window.innerHeight !== lastHeight) { measure(); }
 
     var y = readScroll();
-    var p = y / maxScroll;
-    if (p < 0) { p = 0; } else if (p > 1) { p = 1; }
+    var p = y / journeyScroll;
+    if (p < 0) { p = 0; }
 
     var t = p * total;
     if (t === lastT) { return; }
     lastT = t;
 
     for (var i = 0; i < COUNT; i++) {
-      var el  = imgs[i];
-      var v   = VIEWS[i];
-      var tau = t - i * STEP;
+      var el   = imgs[i];
+      var v    = VIEWS[i];
+      var last = (i === COUNT - 1);
+      var tau  = t - i * STEP;
       var op;
 
-      if (tau < 0 || tau > 1) {
+      if (tau < 0 || (tau > 1 && !last)) {
         op = 0;
       } else {
-        op = (tau <= STEP) ? 1 : (1 - tau) / FADE;
+        /* the twelfth image is exempt from the fade and holds at tau = 1,
+           so the sequence ends locked on it rather than going to black */
+        if (tau > 1) { tau = 1; }
+        op = (last || tau <= STEP) ? 1 : (1 - tau) / FADE;
         if (op < 0) { op = 0; } else if (op > 1) { op = 1; }
 
         var s  = Math.pow(v.S, tau);
