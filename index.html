@@ -1,396 +1,398 @@
 <!doctype html>
-<html lang="he">
+<html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="format-detection" content="telephone=no">
 <title>Journey</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  html {
+  html, body {
     background: #000;
     -webkit-text-size-adjust: 100%;
-    overscroll-behavior: none;
+    overscroll-behavior-y: none;
   }
 
   body {
-    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     color: #fff;
-    overflow-x: hidden;
-    overscroll-behavior-y: none;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -webkit-tap-highlight-color: transparent;
   }
 
-  /* ---------- stage ---------- */
+  /* Scroll is locked until every frame is in memory. */
+  html.is-loading, html.is-loading body { overflow: hidden; height: 100%; touch-action: none; }
 
-  .stage {
+  /* The single canvas. Everything is painted here with drawImage. */
+  #stage {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    height: 100vh;          /* stable on iOS: does not jitter with the toolbar */
-    overflow: hidden;
-    background: #000;
-    z-index: 0;
-  }
-
-  .stage img {
-    position: absolute;
-    top: 0;
-    left: 0;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transform-origin: 0 0;
-    will-change: transform, opacity;
-    opacity: 0;
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-    pointer-events: none;
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-user-drag: none;
-    -webkit-touch-callout: none;
+    background: #000;
+    z-index: 1;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
   }
 
-  /* first image on top, twelfth at the bottom */
-  .stage img:nth-child(1)  { z-index: 12; }
-  .stage img:nth-child(2)  { z-index: 11; }
-  .stage img:nth-child(3)  { z-index: 10; }
-  .stage img:nth-child(4)  { z-index: 9;  }
-  .stage img:nth-child(5)  { z-index: 8;  }
-  .stage img:nth-child(6)  { z-index: 7;  }
-  .stage img:nth-child(7)  { z-index: 6;  }
-  .stage img:nth-child(8)  { z-index: 5;  }
-  .stage img:nth-child(9)  { z-index: 4;  }
-  .stage img:nth-child(10) { z-index: 3;  }
-  .stage img:nth-child(11) { z-index: 2;  }
-  .stage img:nth-child(12) { z-index: 1;  }
+  /* The only thing that actually scrolls. */
+  #spacer { height: 2000vh; width: 100%; pointer-events: none; }
 
-  /* ---------- scroll track ---------- */
-
-  /* the last ~100vh is still room held for content that comes later */
-  .spacer { height: 2600vh; }
-  body:not(.ready) .spacer { height: 0; }
-
-  /* ---------- overlays ---------- */
-
+  /* Soft black falloff, top and bottom. */
   .grad {
-    position: fixed;
-    left: 0;
-    width: 100%;
-    z-index: 20;
+    position: fixed; left: 0; right: 0;
+    height: 20vh;
+    z-index: 2;
     pointer-events: none;
+    opacity: .85;
   }
+  .grad-top    { top: 0;    background: linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0)); }
+  .grad-bottom { bottom: 0; background: linear-gradient(to top,    rgba(0,0,0,.60), rgba(0,0,0,0)); }
 
-  .grad-top {
-    top: 0;
-    height: 16vh;
-    background: linear-gradient(to bottom, rgba(0,0,0,.45), rgba(0,0,0,0));
-  }
-
-  .grad-bottom {
-    bottom: 0;
-    height: 24vh;
-    background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
-  }
-
-  .counter {
+  /* Load progress: 2px hairline across the top. */
+  #bar {
     position: fixed;
-    z-index: 30;
-    right: 18px;
-    bottom: 18px;
-    right: calc(18px + env(safe-area-inset-right, 0px));
-    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
-    font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-    letter-spacing: .16em;
-    color: rgba(255,255,255,.82);
-    text-shadow: 0 1px 8px rgba(0,0,0,.55);
-    pointer-events: none;
-  }
-
-  .hint {
-    position: fixed;
-    z-index: 30;
-    left: 50%;
-    bottom: 20px;
-    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-    transform: translateX(-50%);
-    font-size: 11px;
-    letter-spacing: .22em;
-    color: rgba(255,255,255,.78);
-    text-shadow: 0 1px 8px rgba(0,0,0,.55);
-    pointer-events: none;
-    animation: breathe 2.6s ease-in-out infinite;
-    transition: opacity .4s ease;
-  }
-
-  .hint.gone { opacity: 0; animation: none; }
-
-  @keyframes breathe {
-    0%, 100% { opacity: .45; }
-    50%      { opacity: .95; }
-  }
-
-  /* ---------- loading bar ---------- */
-
-  .loader {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    z-index: 40;
-    background: rgba(255,255,255,.12);
-    pointer-events: none;
-    transition: opacity .45s ease .1s;
-  }
-
-  .loader-bar {
-    height: 100%;
-    width: 0%;
+    top: 0; left: 0;
+    height: 2px; width: 0%;
     background: #fff;
-    transition: width .2s ease-out;
+    z-index: 5;
+    transition: width .18s linear, opacity .45s ease .1s;
+    will-change: width;
   }
+  #bar.done { opacity: 0; }
 
-  .loader.done { opacity: 0; }
-  .loader.hidden { display: none; }
+  /* Scroll cue, gone the moment the page moves. */
+  #hint {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+    z-index: 4;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: .22em;
+    color: rgba(255,255,255,.82);
+    text-shadow: 0 1px 12px rgba(0,0,0,.6);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .6s ease;
+  }
+  #hint.show { opacity: 1; }
+  #hint.hide { opacity: 0; }
 
   @media (prefers-reduced-motion: reduce) {
-    .hint { animation: none; opacity: .8; }
+    #bar { transition: none; }
   }
 </style>
 </head>
 <body>
 
-<div class="loader" id="loader"><div class="loader-bar" id="loaderBar"></div></div>
-
-<div class="stage" id="stage">
-  <img src="img/01.jpg" alt="" decoding="async">
-  <img src="img/02.jpg" alt="" decoding="async">
-  <img src="img/03.jpg" alt="" decoding="async">
-  <img src="img/04.jpg" alt="" decoding="async">
-  <img src="img/05.jpg" alt="" decoding="async">
-  <img src="img/06.jpg" alt="" decoding="async">
-  <img src="img/07.jpg" alt="" decoding="async">
-  <img src="img/08.jpg" alt="" decoding="async">
-  <img src="img/09.jpg" alt="" decoding="async">
-  <img src="img/10.jpg" alt="" decoding="async">
-  <img src="img/11.jpg" alt="" decoding="async">
-  <img src="img/12.jpg" alt="" decoding="async">
-</div>
-
-<div class="spacer"></div>
+<canvas id="stage"></canvas>
 
 <div class="grad grad-top"></div>
 <div class="grad grad-bottom"></div>
-<div class="counter" id="counter">01 / 12</div>
-<div class="hint" id="hint">גלול</div>
+
+<div id="bar"></div>
+<div id="hint">גלול</div>
+
+<!-- Drives the scroll. The final viewport-height of this spacer is the
+     reserved still-frame screen: the last frame holds there, and that is
+     where the site copy will go later. Intentionally left empty. -->
+<div id="spacer"></div>
 
 <script>
 (function () {
   'use strict';
 
-  var COUNT = 12;
-
-  /* S: zoom reached at the end of the shot, CX/CY: the point it pushes toward */
-  var VIEWS = [
-    { S: 1.300, CX: 0.423, CY: 0.456 },
-    { S: 2.636, CX: 0.369, CY: 0.330 },
-    { S: 1.372, CX: 0.513, CY: 0.498 },
-    { S: 1.178, CX: 0.439, CY: 0.425 },
-    { S: 1.890, CX: 0.470, CY: 0.388 },
-    { S: 2.382, CX: 0.505, CY: 0.416 },
-    { S: 1.335, CX: 0.388, CY: 0.480 },
-    { S: 3.035, CX: 0.271, CY: 0.369 },
-    { S: 1.727, CX: 0.526, CY: 0.472 },
-    { S: 3.460, CX: 0.574, CY: 0.430 },
-    { S: 1.150, CX: 0.495, CY: 0.502 },
-    { S: 1.250, CX: 0.500, CY: 0.455 }
+  /* ------------------------------------------------------------------
+     Sequence: three folders read back to back as one continuous strip.
+     frames1 001-048  ->  frames2 001-048  ->  frames3 001-060  =  156
+  ------------------------------------------------------------------ */
+  var SEQ = [
+    { dir: 'frames1', count: 48 },
+    { dir: 'frames2', count: 48 },
+    { dir: 'frames3', count: 60 }
   ];
 
-  /* one unit of travel per shot, cut straight to the next */
-  var total = COUNT;
+  var urls = [];
+  for (var s = 0; s < SEQ.length; s++) {
+    for (var n = 1; n <= SEQ[s].count; n++) {
+      var num = String(n);
+      while (num.length < 3) { num = '0' + num; }
+      urls.push(SEQ[s].dir + '/' + num + '.jpg');
+    }
+  }
+  var TOTAL = urls.length;          // 156
+  var CLIP1_COUNT = SEQ[0].count;   // 48 — where frames2 starts
 
-  var stage     = document.getElementById('stage');
-  var imgs      = Array.prototype.slice.call(stage.getElementsByTagName('img'));
-  var loader    = document.getElementById('loader');
-  var loaderBar = document.getElementById('loaderBar');
-  var counter   = document.getElementById('counter');
-  var hint      = document.getElementById('hint');
+  /* ------------------------------------------------------------------
+     clip2 -> clip3 seam.
+     clip3 opens on a 1.4x magnified framing of clip2's final frame, so
+     the tail of frames2 pushes in to meet it. The push is applied at
+     draw time only — the JPGs themselves are untouched.
 
-  var lastTransform = [];
-  var lastOpacity   = [];
-  for (var k = 0; k < COUNT; k++) { lastTransform[k] = ''; lastOpacity[k] = -1; }
+     ZOOM_MAX and the anchor were measured, not guessed: clip3's opening
+     frame was fitted against clip2's closing frame over (zoom, anchor)
+     using the sky/roofline silhouette, which — unlike the facade, whose
+     near-identical balcony rows produce false matches an octave apart —
+     has no repeating structure. Best fit is 0.986 correlation.
 
-  var maxScroll     = 1;
-  var journeyScroll = 1;
-  var lastHeight    = 0;
-  var lastT       = -1;
-  var lastActive  = -1;
-  var hintGone    = false;
+     The 1.4x magnification came back exact. The anchor landed at
+     0.220 / 0.010 rather than the 0.42 / 0.36 originally specified:
+     clip3 opens on the crown of the building, so the push-in pulls
+     toward the top edge of the frame. Those two numbers are the whole
+     seam — change them and the cut stops being invisible.
+  ------------------------------------------------------------------ */
+  var ZOOM_FROM  = 39;      // 1-based frame inside frames2, zoom = 1.0
+  var ZOOM_TO    = 48;      // 1-based frame inside frames2, zoom = ZOOM_MAX
+  var ZOOM_MAX   = 1.4;
+  var ANCHOR_X   = 0.220;   // fraction of frame width
+  var ANCHOR_Y   = 0.010;   // fraction of frame height
 
-  /* ---------- measuring ---------- */
+  // How far cover may crop before the frame is letterboxed instead.
+  // 1.0 = never crop, Infinity = always fill. iPhone measures ~1.04 here,
+  // so phones always take the cover path.
+  var MAX_CROP = 1.3;
+
+  function zoomFor(idx) {
+    var local = idx - CLIP1_COUNT + 1;              // 1-based inside frames2
+    if (local < ZOOM_FROM || local > ZOOM_TO) { return 1; }
+    var t = (local - ZOOM_FROM) / (ZOOM_TO - ZOOM_FROM);
+    return 1 + (ZOOM_MAX - 1) * t;
+  }
+
+  /* ------------------------------------------------------------------ */
+
+  var canvas = document.getElementById('stage');
+  var ctx    = canvas.getContext('2d', { alpha: false });
+  var bar    = document.getElementById('bar');
+  var hint   = document.getElementById('hint');
+  var root   = document.documentElement;
+
+  var images = new Array(TOTAL);
+  var ready  = false;
+  var cw = 0, ch = 0;
+
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  /* ---- viewport / scroll metrics ---------------------------------- */
+
+  var M = { vh: 1, maxScroll: 1, animEnd: 1 };
 
   function measure() {
-    var doc  = document.documentElement;
     var body = document.body;
-    var h = Math.max(
-      doc.scrollHeight,  doc.offsetHeight,
-      body ? body.scrollHeight : 0,
-      body ? body.offsetHeight : 0
+    M.vh = window.innerHeight || root.clientHeight || 1;
+    var full = Math.max(
+      root.scrollHeight || 0,
+      body ? (body.scrollHeight || 0) : 0
     );
-    maxScroll = Math.max(1, h - window.innerHeight);
-    /* the journey completes one viewport short of the bottom; the last
-       ~100vh holds the twelfth image still */
-    journeyScroll = Math.max(1, maxScroll - window.innerHeight);
-    lastHeight = window.innerHeight;
-    lastT      = -1; // force a repaint against the new metrics
+    M.maxScroll = Math.max(1, full - M.vh);
+    // Hold the last frame for one full screen at the end.
+    M.animEnd = Math.max(1, M.maxScroll - M.vh);
   }
 
-  /* ---------- scroll position: both sources ---------- */
-
-  function readScroll() {
-    var el = document.scrollingElement || document.documentElement;
-    var a  = (typeof window.scrollY === 'number') ? window.scrollY : window.pageYOffset;
-    var b  = el ? el.scrollTop : 0;
-    var y  = (typeof a === 'number' && isFinite(a)) ? a : 0;
-    if (typeof b === 'number' && isFinite(b) && b > y) { y = b; }
-    return y;
+  // Read the scroll offset from both sources; iOS reports through
+  // whichever it feels like, and rubber-banding can push one negative.
+  function scrollTop() {
+    var se = document.scrollingElement || root || document.body;
+    var a = window.scrollY;
+    if (typeof a !== 'number') { a = window.pageYOffset; }
+    var b = se ? se.scrollTop : NaN;
+    var aOk = (typeof a === 'number' && isFinite(a));
+    var bOk = (typeof b === 'number' && isFinite(b));
+    if (aOk && bOk) { return Math.max(a, b); }
+    if (aOk) { return a; }
+    if (bOk) { return b; }
+    return 0;
   }
 
-  /* ---------- the frame ---------- */
+  /* ---- canvas sizing ---------------------------------------------- */
 
-  function render() {
-    if (window.innerHeight !== lastHeight) { measure(); }
+  function resize() {
+    var vw = window.innerWidth  || root.clientWidth  || 1;
+    var vh = window.innerHeight || root.clientHeight || 1;
+    // Cap DPR at 2: the source frames are 810px wide, so a 3x buffer
+    // costs fill rate on iPhone without adding any real detail.
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.max(1, Math.round(vw * dpr));
+    var h = Math.max(1, Math.round(vh * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width  = w;
+      canvas.height = h;
+      canvas.style.width  = vw + 'px';
+      canvas.style.height = vh + 'px';
+      cw = w; ch = h;
+      return true;
+    }
+    return false;
+  }
 
-    var y = readScroll();
-    var p = y / journeyScroll;
-    if (p < 0) { p = 0; }
+  /* ---- painting ---------------------------------------------------- */
 
-    var t = p * total;
-    if (t === lastT) { return; }
-    lastT = t;
+  function draw(idx) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
 
-    for (var i = 0; i < COUNT; i++) {
-      var el   = imgs[i];
-      var v    = VIEWS[i];
-      var last = (i === COUNT - 1);
-      var tau  = t - i;
-      var op;
+    var img = images[idx];
+    if (!img || !img.complete || !img.naturalWidth) { return; }
 
-      if (tau < 0 || (tau > 1 && !last)) {
-        op = 0;
-      } else {
-        /* the twelfth image never cuts away: it holds at tau = 1, so the
-           sequence ends locked on it rather than going to black */
-        if (tau > 1) { tau = 1; }
-        op = 1;
+    var iw = img.naturalWidth, ih = img.naturalHeight;
 
-        var s  = Math.pow(v.S, tau);
-        var cx = 0.5 + (v.CX - 0.5) * tau;
-        var cy = 0.5 + (v.CY - 0.5) * tau;
-        var tx = (0.5 - s * cx) * 100;
-        var ty = (0.5 - s * cy) * 100;
+    // Phone-shaped viewports are within a few percent of the footage's
+    // own 9:16, so cover fills the screen and costs almost nothing. A
+    // landscape desktop is a different story — cover there would throw
+    // away most of the frame and leave a band of balconies — so past
+    // MAX_CROP the whole frame is fitted onto the black field instead.
+    var cover   = Math.max(cw / iw, ch / ih);
+    var contain = Math.min(cw / iw, ch / ih);
+    var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
+    var dw = iw * scale, dh = ih * scale;
+    var dx = (cw - dw) / 2, dy = (ch - dh) / 2;
 
-        var tr = 'translate(' + tx.toFixed(3) + '%,' + ty.toFixed(3) + '%) scale(' + s.toFixed(5) + ')';
-        if (tr !== lastTransform[i]) {
-          lastTransform[i] = tr;
-          el.style.transform = tr;
-        }
-      }
-
-      op = Math.round(op * 1000) / 1000;
-      if (op !== lastOpacity[i]) {
-        lastOpacity[i] = op;
-        el.style.opacity    = op;
-        el.style.visibility = (op === 0) ? 'hidden' : 'visible';
-      }
+    var z = zoomFor(idx);
+    if (z !== 1) {
+      // Scale about the anchor so that point stays put on screen.
+      var px = dx + ANCHOR_X * dw;
+      var py = dy + ANCHOR_Y * dh;
+      dw *= z; dh *= z;
+      dx = px - ANCHOR_X * dw;
+      dy = py - ANCHOR_Y * dh;
     }
 
-    var active = Math.ceil(t - 1);
-    if (active < 0) { active = 0; } else if (active > COUNT - 1) { active = COUNT - 1; }
-    if (active !== lastActive) {
-      lastActive = active;
-      counter.textContent = ('0' + (active + 1)).slice(-2) + ' / ' + COUNT;
-    }
-
-    if (!hintGone && y > 4) {
-      hintGone = true;
-      hint.classList.add('gone');
-    }
+    ctx.drawImage(img, dx, dy, dw, dh);
   }
 
-  function frame() {
-    render();
-    requestAnimationFrame(frame);
-  }
+  /* ---- decode warm-up ------------------------------------------------
+     Rasterising a warm frame measures ~0ms; the only real cost in the
+     loop is the synchronous JPEG decode drawImage is forced into the
+     first time it touches a frame. So walk decode() along just ahead of
+     the playhead while the main thread is idle, one at a time, and the
+     first trip down the page costs what every later trip costs.
 
-  /* ---------- preload, then open the scroll ---------- */
+     Deliberately a short rolling window rather than all 156 up front:
+     156 decoded 810x1437 frames is far more than iOS will hold at once,
+     so asking for them only thrashes the cache and risks the tab.
+  ------------------------------------------------------------------ */
+  var WARM_AHEAD = 12;
+  var warmBusy = false;
+  var warmed = new Array(TOTAL);
 
-  var loaded = 0;
-  var opened = false;
-
-  function bump() {
-    loaded++;
-    var pct = Math.round(loaded / COUNT * 100);
-    loaderBar.style.width = pct + '%';
-    if (loaded >= COUNT) { open(); }
-  }
-
-  function open() {
-    if (opened) { return; }
-    opened = true;
-
-    document.body.classList.add('ready');
-    window.scrollTo(0, 0);
-    measure();
-    render();
-
-    loader.classList.add('done');
-    setTimeout(function () { loader.classList.add('hidden'); }, 700);
-  }
-
-  function watch(el) {
-    var counted = false;
-    var hit = function () {
-      if (counted) { return; }
-      counted = true;
-      bump();
-    };
-    if (el.complete && el.naturalWidth > 0) {
-      hit();
+  function warm(from) {
+    if (warmBusy || !ready) { return; }
+    for (var k = 0; k <= WARM_AHEAD; k++) {
+      var j = from + k;
+      if (j >= TOTAL) { return; }
+      if (warmed[j]) { continue; }
+      var im = images[j];
+      if (!im || !im.complete || !im.naturalWidth) { continue; }
+      warmed[j] = true;
+      if (typeof im.decode !== 'function') { return; }
+      warmBusy = true;
+      im.decode()['catch'](function () {}).then(function () { warmBusy = false; });
       return;
     }
-    el.addEventListener('load', hit);
-    el.addEventListener('error', hit);
   }
 
+  /* ---- render loop -------------------------------------------------- */
+
+  var lastIdx = -1, lastW = -1, lastH = -1, hintHidden = false;
+
+  function tick() {
+    // innerHeight shifts as Safari's chrome collapses; re-measure then.
+    if (window.innerHeight !== M.vh) { measure(); }
+
+    var resized = resize();
+
+    var y = clamp(scrollTop(), 0, M.maxScroll);
+    var p = clamp(y / M.animEnd, 0, 1);
+    var idx = Math.round(p * (TOTAL - 1));
+
+    if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
+      draw(idx);
+      lastIdx = idx; lastW = cw; lastH = ch;
+    }
+
+    warm(idx);
+
+    if (ready && !hintHidden && y > 6) {
+      hintHidden = true;
+      hint.className = 'hide';
+    }
+
+    requestAnimationFrame(tick);
+  }
+
+  /* ---- scroll lock while loading ------------------------------------ */
+
+  function block(e) { e.preventDefault(); }
+
+  function lock() {
+    root.className = 'is-loading';
+    window.addEventListener('touchmove', block, { passive: false });
+    window.addEventListener('wheel', block, { passive: false });
+  }
+
+  function unlock() {
+    if (ready) { return; }
+    ready = true;
+    root.className = '';
+    window.removeEventListener('touchmove', block, { passive: false });
+    window.removeEventListener('wheel', block, { passive: false });
+    bar.className = 'done';
+    hint.className = 'show';
+    measure();
+    lastIdx = -1;          // force one repaint at the new metrics
+  }
+
+  /* ---- preload ------------------------------------------------------ */
+
+  var loaded = 0;
+  var stall = null;
+
+  function progress() {
+    loaded++;
+    bar.style.width = ((loaded / TOTAL) * 100).toFixed(2) + '%';
+
+    if (stall) { clearTimeout(stall); }
+    if (loaded >= TOTAL) {
+      unlock();
+    } else {
+      // Safety net: if nothing lands for 25s, stop holding the page hostage.
+      stall = setTimeout(unlock, 25000);
+    }
+  }
+
+  function preload() {
+    for (var i = 0; i < TOTAL; i++) {
+      var img = new Image();
+      img.decoding = 'async';
+      img.onload = progress;
+      img.onerror = progress;
+      img.src = urls[i];
+      images[i] = img;
+    }
+  }
+
+  /* ---- boot ---------------------------------------------------------- */
+
   if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
-
   window.scrollTo(0, 0);
+
+  lock();
   measure();
-  render();
-
-  for (var j = 0; j < imgs.length; j++) { watch(imgs[j]); }
-
-  /* never let a stalled image lock the page shut */
-  setTimeout(open, 12000);
+  resize();
+  draw(0);
 
   window.addEventListener('resize', measure);
-  window.addEventListener('orientationchange', function () { setTimeout(measure, 250); });
-  window.addEventListener('pageshow', function () { measure(); render(); });
+  window.addEventListener('orientationchange', function () {
+    setTimeout(measure, 250);
+  });
 
-  requestAnimationFrame(frame);
+  preload();
+  requestAnimationFrame(tick);
 })();
 </script>
-
 </body>
 </html>
