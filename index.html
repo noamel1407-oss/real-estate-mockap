@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Journey</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html {
+    background: #000;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+
+  body {
+    background: #000;
+    color: #fff;
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---------- stage ---------- */
+
+  .stage {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    height: 100vh;          /* stable on iOS: does not jitter with the toolbar */
+    overflow: hidden;
+    background: #000;
+    z-index: 0;
+  }
+
+  .stage img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform-origin: 0 0;
+    will-change: transform, opacity;
+    opacity: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* first image on top, twelfth at the bottom */
+  .stage img:nth-child(1)  { z-index: 12; }
+  .stage img:nth-child(2)  { z-index: 11; }
+  .stage img:nth-child(3)  { z-index: 10; }
+  .stage img:nth-child(4)  { z-index: 9;  }
+  .stage img:nth-child(5)  { z-index: 8;  }
+  .stage img:nth-child(6)  { z-index: 7;  }
+  .stage img:nth-child(7)  { z-index: 6;  }
+  .stage img:nth-child(8)  { z-index: 5;  }
+  .stage img:nth-child(9)  { z-index: 4;  }
+  .stage img:nth-child(10) { z-index: 3;  }
+  .stage img:nth-child(11) { z-index: 2;  }
+  .stage img:nth-child(12) { z-index: 1;  }
+
+  /* ---------- scroll track ---------- */
+
+  .spacer { height: 1250vh; }
+  body:not(.ready) .spacer { height: 0; }
+
+  /* ---------- overlays ---------- */
+
+  .grad {
+    position: fixed;
+    left: 0;
+    width: 100%;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .grad-top {
+    top: 0;
+    height: 16vh;
+    background: linear-gradient(to bottom, rgba(0,0,0,.45), rgba(0,0,0,0));
+  }
+
+  .grad-bottom {
+    bottom: 0;
+    height: 24vh;
+    background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+  }
+
+  .counter {
+    position: fixed;
+    z-index: 30;
+    right: 18px;
+    bottom: 18px;
+    right: calc(18px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    letter-spacing: .16em;
+    color: rgba(255,255,255,.82);
+    text-shadow: 0 1px 8px rgba(0,0,0,.55);
+    pointer-events: none;
+  }
+
+  .hint {
+    position: fixed;
+    z-index: 30;
+    left: 50%;
+    bottom: 20px;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    font-size: 11px;
+    letter-spacing: .22em;
+    color: rgba(255,255,255,.78);
+    text-shadow: 0 1px 8px rgba(0,0,0,.55);
+    pointer-events: none;
+    animation: breathe 2.6s ease-in-out infinite;
+    transition: opacity .4s ease;
+  }
+
+  .hint.gone { opacity: 0; animation: none; }
+
+  @keyframes breathe {
+    0%, 100% { opacity: .45; }
+    50%      { opacity: .95; }
+  }
+
+  /* ---------- loading bar ---------- */
+
+  .loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    z-index: 40;
+    background: rgba(255,255,255,.12);
+    pointer-events: none;
+    transition: opacity .45s ease .1s;
+  }
+
+  .loader-bar {
+    height: 100%;
+    width: 0%;
+    background: #fff;
+    transition: width .2s ease-out;
+  }
+
+  .loader.done { opacity: 0; }
+  .loader.hidden { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hint { animation: none; opacity: .8; }
+  }
+</style>
+</head>
+<body>
+
+<div class="loader" id="loader"><div class="loader-bar" id="loaderBar"></div></div>
+
+<div class="stage" id="stage">
+  <img src="img/01.jpg" alt="" decoding="async">
+  <img src="img/02.jpg" alt="" decoding="async">
+  <img src="img/03.jpg" alt="" decoding="async">
+  <img src="img/04.jpg" alt="" decoding="async">
+  <img src="img/05.jpg" alt="" decoding="async">
+  <img src="img/06.jpg" alt="" decoding="async">
+  <img src="img/07.jpg" alt="" decoding="async">
+  <img src="img/08.jpg" alt="" decoding="async">
+  <img src="img/09.jpg" alt="" decoding="async">
+  <img src="img/10.jpg" alt="" decoding="async">
+  <img src="img/11.jpg" alt="" decoding="async">
+  <img src="img/12.jpg" alt="" decoding="async">
+</div>
+
+<div class="spacer"></div>
+
+<div class="grad grad-top"></div>
+<div class="grad grad-bottom"></div>
+<div class="counter" id="counter">01 / 12</div>
+<div class="hint" id="hint">גלול</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var FADE  = 0.14;
+  var STEP  = 1 - FADE;
+  var COUNT = 12;
+  var total = (COUNT - 1) * STEP + 1;
+
+  var VIEWS = [
+    { S: 1.30, CX: 0.423, CY: 0.456 },
+    { S: 1.55, CX: 0.369, CY: 0.340 },
+    { S: 1.37, CX: 0.513, CY: 0.498 },
+    { S: 1.25, CX: 0.439, CY: 0.425 },
+    { S: 1.55, CX: 0.470, CY: 0.388 },
+    { S: 1.55, CX: 0.505, CY: 0.416 },
+    { S: 1.33, CX: 0.388, CY: 0.480 },
+    { S: 1.55, CX: 0.340, CY: 0.369 },
+    { S: 1.55, CX: 0.525, CY: 0.471 },
+    { S: 1.55, CX: 0.574, CY: 0.430 },
+    { S: 1.25, CX: 0.495, CY: 0.502 },
+    { S: 1.25, CX: 0.500, CY: 0.455 }
+  ];
+
+  var stage     = document.getElementById('stage');
+  var imgs      = Array.prototype.slice.call(stage.getElementsByTagName('img'));
+  var loader    = document.getElementById('loader');
+  var loaderBar = document.getElementById('loaderBar');
+  var counter   = document.getElementById('counter');
+  var hint      = document.getElementById('hint');
+
+  var lastTransform = [];
+  var lastOpacity   = [];
+  for (var k = 0; k < COUNT; k++) { lastTransform[k] = ''; lastOpacity[k] = -1; }
+
+  var maxScroll   = 1;
+  var lastHeight  = 0;
+  var lastT       = -1;
+  var lastActive  = -1;
+  var hintGone    = false;
+
+  /* ---------- measuring ---------- */
+
+  function measure() {
+    var doc  = document.documentElement;
+    var body = document.body;
+    var h = Math.max(
+      doc.scrollHeight,  doc.offsetHeight,
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0
+    );
+    maxScroll  = Math.max(1, h - window.innerHeight);
+    lastHeight = window.innerHeight;
+    lastT      = -1; // force a repaint against the new metrics
+  }
+
+  /* ---------- scroll position: both sources ---------- */
+
+  function readScroll() {
+    var el = document.scrollingElement || document.documentElement;
+    var a  = (typeof window.scrollY === 'number') ? window.scrollY : window.pageYOffset;
+    var b  = el ? el.scrollTop : 0;
+    var y  = (typeof a === 'number' && isFinite(a)) ? a : 0;
+    if (typeof b === 'number' && isFinite(b) && b > y) { y = b; }
+    return y;
+  }
+
+  /* ---------- the frame ---------- */
+
+  function render() {
+    if (window.innerHeight !== lastHeight) { measure(); }
+
+    var y = readScroll();
+    var p = y / maxScroll;
+    if (p < 0) { p = 0; } else if (p > 1) { p = 1; }
+
+    var t = p * total;
+    if (t === lastT) { return; }
+    lastT = t;
+
+    for (var i = 0; i < COUNT; i++) {
+      var el  = imgs[i];
+      var v   = VIEWS[i];
+      var tau = t - i * STEP;
+      var op;
+
+      if (tau < 0 || tau > 1) {
+        op = 0;
+      } else {
+        op = (tau <= STEP) ? 1 : (1 - tau) / FADE;
+        if (op < 0) { op = 0; } else if (op > 1) { op = 1; }
+
+        var s  = Math.pow(v.S, tau);
+        var cx = 0.5 + (v.CX - 0.5) * tau;
+        var cy = 0.5 + (v.CY - 0.5) * tau;
+        var tx = (0.5 - s * cx) * 100;
+        var ty = (0.5 - s * cy) * 100;
+
+        var tr = 'translate(' + tx.toFixed(3) + '%,' + ty.toFixed(3) + '%) scale(' + s.toFixed(5) + ')';
+        if (tr !== lastTransform[i]) {
+          lastTransform[i] = tr;
+          el.style.transform = tr;
+        }
+      }
+
+      op = Math.round(op * 1000) / 1000;
+      if (op !== lastOpacity[i]) {
+        lastOpacity[i] = op;
+        el.style.opacity    = op;
+        el.style.visibility = (op === 0) ? 'hidden' : 'visible';
+      }
+    }
+
+    var active = Math.floor(t / STEP);
+    if (active < 0) { active = 0; } else if (active > COUNT - 1) { active = COUNT - 1; }
+    if (active !== lastActive) {
+      lastActive = active;
+      counter.textContent = ('0' + (active + 1)).slice(-2) + ' / ' + COUNT;
+    }
+
+    if (!hintGone && y > 4) {
+      hintGone = true;
+      hint.classList.add('gone');
+    }
+  }
+
+  function frame() {
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- preload, then open the scroll ---------- */
+
+  var loaded = 0;
+  var opened = false;
+
+  function bump() {
+    loaded++;
+    var pct = Math.round(loaded / COUNT * 100);
+    loaderBar.style.width = pct + '%';
+    if (loaded >= COUNT) { open(); }
+  }
+
+  function open() {
+    if (opened) { return; }
+    opened = true;
+
+    document.body.classList.add('ready');
+    window.scrollTo(0, 0);
+    measure();
+    render();
+
+    loader.classList.add('done');
+    setTimeout(function () { loader.classList.add('hidden'); }, 700);
+  }
+
+  function watch(el) {
+    var counted = false;
+    var hit = function () {
+      if (counted) { return; }
+      counted = true;
+      bump();
+    };
+    if (el.complete && el.naturalWidth > 0) {
+      hit();
+      return;
+    }
+    el.addEventListener('load', hit);
+    el.addEventListener('error', hit);
+  }
+
+  if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
+
+  window.scrollTo(0, 0);
+  measure();
+  render();
+
+  for (var j = 0; j < imgs.length; j++) { watch(imgs[j]); }
+
+  /* never let a stalled image lock the page shut */
+  setTimeout(open, 12000);
+
+  window.addEventListener('resize', measure);
+  window.addEventListener('orientationchange', function () { setTimeout(measure, 250); });
+  window.addEventListener('pageshow', function () { measure(); render(); });
+
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
