@@ -77,7 +77,7 @@
   /* ---------- scroll track ---------- */
 
   /* the last ~100vh is still room held for content that comes later */
-  .spacer { height: 1350vh; }
+  .spacer { height: 2600vh; }
   body:not(.ready) .spacer { height: 0; }
 
   /* ---------- overlays ---------- */
@@ -198,25 +198,31 @@
 (function () {
   'use strict';
 
-  var FADE  = 0.14;
-  var STEP  = 1 - FADE;
   var COUNT = 12;
-  var total = (COUNT - 1) * STEP + 1;
 
+  /* S: zoom reached at the end of the shot, CX/CY: the point it pushes
+     toward, F: how long that shot spends fading into the next one */
   var VIEWS = [
-    { S: 1.30, CX: 0.423, CY: 0.456 },
-    { S: 1.55, CX: 0.369, CY: 0.340 },
-    { S: 1.37, CX: 0.513, CY: 0.498 },
-    { S: 1.25, CX: 0.439, CY: 0.425 },
-    { S: 1.55, CX: 0.470, CY: 0.388 },
-    { S: 1.55, CX: 0.505, CY: 0.416 },
-    { S: 1.33, CX: 0.388, CY: 0.480 },
-    { S: 1.55, CX: 0.340, CY: 0.369 },
-    { S: 1.55, CX: 0.525, CY: 0.471 },
-    { S: 1.55, CX: 0.574, CY: 0.430 },
-    { S: 1.25, CX: 0.495, CY: 0.502 },
-    { S: 1.25, CX: 0.500, CY: 0.455 }
+    { S: 1.300, CX: 0.423, CY: 0.456, F: 0.18 },
+    { S: 2.636, CX: 0.369, CY: 0.330, F: 0.18 },
+    { S: 1.372, CX: 0.513, CY: 0.498, F: 0.18 },
+    { S: 1.178, CX: 0.439, CY: 0.425, F: 0.18 },
+    { S: 1.890, CX: 0.470, CY: 0.388, F: 0.34 },
+    { S: 2.382, CX: 0.505, CY: 0.416, F: 0.18 },
+    { S: 1.335, CX: 0.388, CY: 0.480, F: 0.18 },
+    { S: 3.035, CX: 0.271, CY: 0.369, F: 0.34 },
+    { S: 1.727, CX: 0.526, CY: 0.472, F: 0.18 },
+    { S: 3.460, CX: 0.574, CY: 0.430, F: 0.34 },
+    { S: 1.150, CX: 0.495, CY: 0.502, F: 0.18 },
+    { S: 1.250, CX: 0.500, CY: 0.455, F: 0.00 }
   ];
+
+  /* each shot opens where the one before it starts fading out */
+  var STARTS = [0];
+  for (var n = 1; n < COUNT; n++) {
+    STARTS[n] = STARTS[n - 1] + (1 - VIEWS[n - 1].F);
+  }
+  var total = STARTS[COUNT - 1] + 1;
 
   var stage     = document.getElementById('stage');
   var imgs      = Array.prototype.slice.call(stage.getElementsByTagName('img'));
@@ -282,7 +288,7 @@
       var el   = imgs[i];
       var v    = VIEWS[i];
       var last = (i === COUNT - 1);
-      var tau  = t - i * STEP;
+      var tau  = t - STARTS[i];
       var op;
 
       if (tau < 0 || (tau > 1 && !last)) {
@@ -291,7 +297,8 @@
         /* the twelfth image is exempt from the fade and holds at tau = 1,
            so the sequence ends locked on it rather than going to black */
         if (tau > 1) { tau = 1; }
-        op = (last || tau <= STEP) ? 1 : (1 - tau) / FADE;
+        var hold = 1 - v.F;   /* fully opaque until here, then fades out */
+        op = (last || tau <= hold) ? 1 : (1 - tau) / v.F;
         if (op < 0) { op = 0; } else if (op > 1) { op = 1; }
 
         var s  = Math.pow(v.S, tau);
@@ -315,8 +322,10 @@
       }
     }
 
-    var active = Math.floor(t / STEP);
-    if (active < 0) { active = 0; } else if (active > COUNT - 1) { active = COUNT - 1; }
+    var active = 0;
+    for (var a = COUNT - 1; a > 0; a--) {
+      if (t >= STARTS[a]) { active = a; break; }
+    }
     if (active !== lastActive) {
       lastActive = active;
       counter.textContent = ('0' + (active + 1)).slice(-2) + ' / ' + COUNT;
