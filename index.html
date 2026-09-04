@@ -139,6 +139,14 @@
   var TOTAL = urls.length;          // 409
   var CLIP1_COUNT = SEQ[0].count;   // 48 — where frames2 starts
 
+  // 0-based index of frames5 001, summed off SEQ rather than written down,
+  // so the second seam cannot drift if a count above it ever changes.
+  var CLIP5_START = (function () {
+    var n = 0;
+    for (var q = 0; q < SEQ.length && SEQ[q].dir !== 'frames5'; q++) { n += SEQ[q].count; }
+    return n;
+  })();
+
   /* ------------------------------------------------------------------
      clip2 -> clip3 seam.
      clip3 opens on a 1.4x magnified framing of clip2's final frame, so
@@ -163,6 +171,39 @@
   var ANCHOR_X   = 0.220;   // fraction of frame width
   var ANCHOR_Y   = 0.010;   // fraction of frame height
 
+  /* ------------------------------------------------------------------
+     frames5 -> frames9 seam.
+     Same mechanism as above, second instance of it. clip6 opens a short
+     step further into the room than frames5 closes, so the tail of
+     frames5 travels to meet it.
+
+     The gap is small and mostly sideways rather than forward, which makes
+     it a different shape from the clip2 -> clip3 push. Measured on the
+     rendered phone viewport rather than on the whole JPG: fitting over
+     the full frame reports about 6% because it weights the left and right
+     margins that cover() crops away on a phone, and those margins are the
+     worst-matching part. Against what the phone actually shows the answer
+     is 3.4% of scale and a horizontal shift of 3.9% of frame width — a
+     couple of degrees of pan, which is the gap as described.
+
+     S5_ANCHOR_X above 1 is not a typo. A 3% zoom carries almost no
+     translation with it, so shifting the frame by 3.9% of its width means
+     scaling about a point off the right edge. The anchor is the fixed
+     point of the scaling, not a point of interest, and it is allowed to
+     sit outside the frame.
+
+     This is a softer win than the first seam: 18.9 down to 14.6 on the
+     usual 32x57 metric, where clip2 -> clip3 reaches about 2. The ceiling
+     is parallax again — clip6 is a separately generated shot, so near and
+     far move at their own rates and no global 2D transform reconciles
+     them.
+  ------------------------------------------------------------------ */
+  var S5_FROM     = 39;      // 1-based frame inside frames5, zoom = 1.0
+  var S5_TO       = 48;      // 1-based frame inside frames5, zoom = S5_ZOOM_MAX
+  var S5_ZOOM_MAX = 1.034;
+  var S5_ANCHOR_X = 1.671;   // fraction of frame width, deliberately off-frame
+  var S5_ANCHOR_Y = 1.047;   // fraction of frame height, deliberately off-frame
+
   // How far cover may crop before the frame is letterboxed instead.
   // 1.0 = never crop, Infinity = always fill. iPhone measures ~1.04 here,
   // so phones always take the cover path.
@@ -173,6 +214,13 @@
     if (local < ZOOM_FROM || local > ZOOM_TO) { return 1; }
     var t = (local - ZOOM_FROM) / (ZOOM_TO - ZOOM_FROM);
     return 1 + (ZOOM_MAX - 1) * t;
+  }
+
+  function zoomFor5(idx) {
+    var local = idx - CLIP5_START + 1;              // 1-based inside frames5
+    if (local < S5_FROM || local > S5_TO) { return 1; }
+    var t = (local - S5_FROM) / (S5_TO - S5_FROM);
+    return 1 + (S5_ZOOM_MAX - 1) * t;
   }
 
   /* ------------------------------------------------------------------ */
@@ -263,14 +311,20 @@
     var dw = iw * scale, dh = ih * scale;
     var dx = (cw - dw) / 2, dy = (ch - dh) / 2;
 
-    var z = zoomFor(idx);
+    // Two seams, and the ramps never overlap, so the first one wins.
+    var z  = zoomFor(idx);
+    var ax = ANCHOR_X, ay = ANCHOR_Y;
+    if (z === 1) {
+      z  = zoomFor5(idx);
+      ax = S5_ANCHOR_X; ay = S5_ANCHOR_Y;
+    }
     if (z !== 1) {
       // Scale about the anchor so that point stays put on screen.
-      var px = dx + ANCHOR_X * dw;
-      var py = dy + ANCHOR_Y * dh;
+      var px = dx + ax * dw;
+      var py = dy + ay * dh;
       dw *= z; dh *= z;
-      dx = px - ANCHOR_X * dw;
-      dy = py - ANCHOR_Y * dh;
+      dx = px - ax * dw;
+      dy = py - ay * dh;
     }
 
     ctx.drawImage(img, dx, dy, dw, dh);
