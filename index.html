@@ -38,7 +38,7 @@
   }
 
   /* The only thing that actually scrolls. */
-  #spacer { height: 5225vh; width: 100%; pointer-events: none; }
+  #spacer { height: 1400vh; width: 100%; pointer-events: none; }
 
   /* Soft black falloff, top and bottom. */
   .grad {
@@ -50,20 +50,6 @@
   }
   .grad-top    { top: 0;    background: linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0)); }
   .grad-bottom { bottom: 0; background: linear-gradient(to top,    rgba(0,0,0,.60), rgba(0,0,0,0)); }
-
-  /* Black dip over the frames5 -> frames9 cut. Opacity is written from
-     the render loop; it sits above the canvas and above the falloffs so
-     full black is genuinely full black. */
-  #dip {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: #000;
-    z-index: 3;
-    pointer-events: none;
-    opacity: 0;
-    will-change: opacity;
-  }
 
   /* Load progress: 2px hairline across the top. */
   #bar {
@@ -107,8 +93,6 @@
 
 <div class="grad grad-top"></div>
 <div class="grad grad-bottom"></div>
-
-<div id="dip"></div>
 
 <div id="bar"></div>
 <div id="hint">גלול</div>
@@ -163,13 +147,6 @@
     return n;
   })();
 
-  // 0-based index of frames9 001 — the one cut the dip covers.
-  var CLIP9_START = (function () {
-    var n = 0;
-    for (var q = 0; q < SEQ.length && SEQ[q].dir !== 'frames9'; q++) { n += SEQ[q].count; }
-    return n;
-  })();
-
   /* ------------------------------------------------------------------
      Scroll pacing.
      A frame index is not a constant amount of travel. Measured on the
@@ -190,7 +167,7 @@
      of 50.8x: 146 frames come up to the floor, 38 come down to the
      ceiling, 225 are untouched.
 
-     This only redistributes the 5225vh, it never adds any. Frame order is
+     This only redistributes the spacer, it never adds any. Frame order is
      untouched, and both seam calibrations key off the frame index rather
      than off scroll, so neither is affected.
   ------------------------------------------------------------------ */
@@ -221,39 +198,6 @@
       if (PACE_CUM[mid] < p) { lo = mid + 1; } else { hi = mid; }
     }
     return lo < TOTAL ? lo : TOTAL - 1;
-  }
-
-  /* ------------------------------------------------------------------
-     Black dip over the frames5 -> frames9 cut.
-     The one join left in the strip that still reads. Pacing spread it over
-     more scroll without shrinking it, because either side of a cut is the
-     same pair of images however slowly you cross them. So this one gets
-     covered rather than smoothed, and only this one.
-
-     The ramp is anchored to the pacing map rather than to a fixed slab of
-     vh, so it goes on landing on the cut if PACE is ever remeasured. Black
-     climbs across the slices of the last five frames of frames5, reaches
-     full exactly on the boundary where frames9/001 replaces frames5/048,
-     and clears across the slices of the first five frames of frames9. The
-     two halves are not equal in vh and are not meant to be: the frames5
-     side sits on the pacing floor and the frames9 side carries the wide
-     slice the cut earns.
-
-     Opacity is a pure function of scroll position. No velocity, no
-     direction, no state kept between frames — so scrolling back up plays
-     the same dip in reverse rather than a different one.
-  ------------------------------------------------------------------ */
-  var DIP_LEAD = 5;                              // frames5 frames spent going to black
-  var DIP_TAIL = 5;                              // frames9 frames spent coming back
-  var DIP_A = PACE_CUM[CLIP9_START - DIP_LEAD - 1];   // opacity 0, dip starts
-  var DIP_M = PACE_CUM[CLIP9_START - 1];              // opacity 1, exactly the cut
-  var DIP_B = PACE_CUM[CLIP9_START + DIP_TAIL - 1];   // opacity 0, dip done
-
-  function dipAt(p) {
-    if (p <= DIP_A || p >= DIP_B) { return 0; }
-    var t = (p < DIP_M) ? (p - DIP_A) / (DIP_M - DIP_A)
-                        : (DIP_B - p) / (DIP_B - DIP_M);
-    return t * t * (3 - 2 * t);                  // smoothstep: eased both ends
   }
 
   /* ------------------------------------------------------------------
@@ -338,7 +282,6 @@
   var ctx    = canvas.getContext('2d', { alpha: false });
   var bar    = document.getElementById('bar');
   var hint   = document.getElementById('hint');
-  var dipEl  = document.getElementById('dip');
   var root   = document.documentElement;
 
   var images = new Array(TOTAL);
@@ -455,25 +398,58 @@
   var warmBusy = false;
   var warmed = new Array(TOTAL);
 
+  // Returns whether the walker still has ground to cover. The loop reads
+  // that to decide if it may idle: stopping mid-window would leave the next
+  // few frames undecoded and hand the cost straight back to the next flick.
   function warm(from) {
-    if (warmBusy || !ready) { return; }
+    if (!ready) { return false; }
+    if (warmBusy) { return true; }
     for (var k = 0; k <= WARM_AHEAD; k++) {
       var j = from + k;
-      if (j >= TOTAL) { return; }
+      if (j >= TOTAL) { return false; }
       if (warmed[j]) { continue; }
       var im = images[j];
       if (!im || !im.complete || !im.naturalWidth) { continue; }
       warmed[j] = true;
-      if (typeof im.decode !== 'function') { return; }
+      if (typeof im.decode !== 'function') { return false; }
       warmBusy = true;
       im.decode()['catch'](function () {}).then(function () { warmBusy = false; });
-      return;
+      return true;
     }
+    return false;
   }
 
-  /* ---- render loop -------------------------------------------------- */
+  /* ---- render loop ----------------------------------------------------
+     Two positions, not one. TARGET is where the scroll says we are; SHOWN
+     is where the picture actually is, and it closes a fixed fraction of the
+     gap on every frame. Reading the scroll straight into the frame index is
+     what makes a finger twitch snap to another still; letting the picture
+     lag and catch up turns the same twitch into a glide.
 
-  var lastIdx = -1, lastW = -1, lastH = -1, hintHidden = false, lastDip = -1;
+     Deliberately not a CSS transition. There is nothing to transition — the
+     frame is painted with drawImage, so the easing has to happen on the
+     value before it is drawn, inside this loop.
+
+     CHASE is per frame, so the feel is frame-rate dependent by construction;
+     at 60fps it closes 90% of a gap in about a quarter second. SETTLE is
+     sized against the pacing map rather than picked by eye: the narrowest
+     slice is 0.00107 of the page, so a gap under 0.0001 is a tenth of a
+     slice and cannot move the frame. Below it, snap and stop.
+
+     The loop parks itself when there is nothing left to do and a scroll or
+     resize restarts it, so a still page costs nothing.
+  ------------------------------------------------------------------------ */
+
+  var lastIdx = -1, lastW = -1, lastH = -1, hintHidden = false;
+
+  var CHASE  = 0.135;   // fraction of the remaining gap closed per frame
+  var SETTLE = 0.0001;  // gap below which the frame cannot change; snap and park
+
+  var targetP = 0, shownP = 0, running = false;
+
+  function kick() {
+    if (!running) { running = true; requestAnimationFrame(tick); }
+  }
 
   function tick() {
     // innerHeight shifts as Safari's chrome collapses; re-measure then.
@@ -482,26 +458,34 @@
     var resized = resize();
 
     var y = clamp(scrollTop(), 0, M.maxScroll);
-    var p = clamp(y / M.animEnd, 0, 1);
-    var idx = frameAt(p);
+    targetP = clamp(y / M.animEnd, 0, 1);
+
+    var gap = targetP - shownP;
+    if (gap < 0) { gap = -gap; }
+    var settled = gap < SETTLE;
+    if (settled) { shownP = targetP; }
+    else { shownP += (targetP - shownP) * CHASE; }
+
+    var idx = frameAt(shownP);
 
     if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
       draw(idx);
       lastIdx = idx; lastW = cw; lastH = ch;
     }
 
-    // Position only: the same p always gives the same black, either way.
-    var d = dipAt(p);
-    if (d !== lastDip) { dipEl.style.opacity = d; lastDip = d; }
+    // Warmed from the shown frame: that is the playhead, and it is what the
+    // next few frames of easing will walk through.
+    var warming = warm(idx);
 
-    warm(idx);
-
+    // The hint answers "has the finger moved at all", so it reads the raw
+    // scroll rather than the eased value — otherwise it would linger.
     if (ready && !hintHidden && y > 6) {
       hintHidden = true;
       hint.className = 'hide';
     }
 
-    requestAnimationFrame(tick);
+    if (!settled || warming) { requestAnimationFrame(tick); }
+    else { running = false; }
   }
 
   /* ---- scroll lock while loading ------------------------------------ */
@@ -524,6 +508,7 @@
     hint.className = 'show';
     measure();
     lastIdx = -1;          // force one repaint at the new metrics
+    kick();                // the loop may have parked while the page was locked
   }
 
   /* ---- preload ------------------------------------------------------ */
@@ -565,13 +550,15 @@
   resize();
   draw(0);
 
-  window.addEventListener('resize', measure);
+  // Anything that can move the picture has to be able to wake the loop.
+  window.addEventListener('scroll', kick, { passive: true });
+  window.addEventListener('resize', function () { measure(); kick(); });
   window.addEventListener('orientationchange', function () {
-    setTimeout(measure, 250);
+    setTimeout(function () { measure(); kick(); }, 250);
   });
 
   preload();
-  requestAnimationFrame(tick);
+  kick();
 })();
 </script>
 </body>
