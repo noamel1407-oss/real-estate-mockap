@@ -38,7 +38,7 @@
   }
 
   /* The only thing that actually scrolls. */
-  #spacer { height: 3446vh; width: 100%; pointer-events: none; }
+  #spacer { height: 5225vh; width: 100%; pointer-events: none; }
 
   /* Soft black falloff, top and bottom. */
   .grad {
@@ -107,23 +107,25 @@
   'use strict';
 
   /* ------------------------------------------------------------------
-     Sequence: five folders read back to back as one continuous strip.
+     Sequence: seven folders read back to back as one continuous strip.
      frames1 001-048  ->  frames2 001-048  ->  frames3 001-060  ->
-     frames4 001-087  ->  frames5 001-027  =  270
+     frames4 001-087  ->  frames5 001-048  ->  frames9 001-061  ->
+     frames10 001-057  =  409
 
-     The strip stops mid-folder, on frames5 027 — the wide shot that holds
-     the whole living room: sofa centred, striped rug in front of it, pool
-     through the glass to the left, dining chairs to the right, and the
-     camera still far enough back that the ceiling and its light track are
-     in frame. frames5 028-048 and the whole of frames6, frames7 and
-     frames8 stay in the repo but are deliberately off the strip.
+     frames5 runs its full 48 again and the journey carries on past it:
+     frames9 is clip6 at every second frame, frames10 is clip7 at a hand
+     picked set. The numbering is history, not order — frames6, frames7
+     and frames8 were cut from the strip earlier and stay in the repo,
+     off it.
   ------------------------------------------------------------------ */
   var SEQ = [
     { dir: 'frames1', count: 48 },
     { dir: 'frames2', count: 48 },
     { dir: 'frames3', count: 60 },
     { dir: 'frames4', count: 87 },
-    { dir: 'frames5', count: 27 }    // truncated — the journey ends here
+    { dir: 'frames5', count: 48 },
+    { dir: 'frames9', count: 61 },
+    { dir: 'frames10', count: 57 }
   ];
 
   var urls = [];
@@ -134,7 +136,7 @@
       urls.push(SEQ[s].dir + '/' + num + '.jpg');
     }
   }
-  var TOTAL = urls.length;          // 270
+  var TOTAL = urls.length;          // 409
   var CLIP1_COUNT = SEQ[0].count;   // 48 — where frames2 starts
 
   /* ------------------------------------------------------------------
@@ -281,8 +283,8 @@
      the playhead while the main thread is idle, one at a time, and the
      first trip down the page costs what every later trip costs.
 
-     Deliberately a short rolling window rather than all 270 up front:
-     270 decoded 810x1437 frames is far more than iOS will hold at once,
+     Deliberately a short rolling window rather than all 409 up front:
+     409 decoded 810x1437 frames is far more than iOS will hold at once,
      so asking for them only thrashes the cache and risks the tab.
   ------------------------------------------------------------------ */
   var WARM_AHEAD = 12;
