@@ -43,12 +43,15 @@
   /* The only thing that actually scrolls. */
   #spacer { height: 1400vh; width: 100%; pointer-events: none; }
 
-  /* The opening still. It covers the canvas from the first paint, so it
-     is also the poster the page shows while the 409 frames come down the
-     wire, and the loop dissolves it out over the opening stretch of the
-     scroll. Same cover fit the canvas does, so nothing jumps when it
-     goes. */
-  #intro {
+  /* The opening screen's ground: frame one of the strip, in the same
+     cover fit the canvas gives it, so it is the picture the page shows
+     while the other 408 frames come down the wire. It is not dissolved
+     out on scroll — it is the same photograph the canvas is about to
+     draw, and cross-fading it over a camera that has already moved on
+     would only smear frame one across the strip. It is dropped outright
+     once the page unlocks and the canvas has a frame of its own up, and
+     that handover is invisible because both sides of it are this image. */
+  #poster {
     position: fixed;
     top: 0; left: 0;
     width: 100%; height: 100%;
@@ -56,6 +59,19 @@
     object-position: center;
     background: #000;
     z-index: 2;
+    pointer-events: none;
+  }
+
+  /* The mark over it. Everything about its box is written by fitLogo()
+     off the canvas's own draw rectangle, so it holds one position
+     relative to the picture on every screen; the loop writes its
+     opacity. Above the falloff rather than under it — a white mark
+     dimmed by the top gradient is the one thing this shouldn't be. */
+  #logo {
+    position: fixed;
+    top: 0; left: 0;
+    width: 0; height: 0;
+    z-index: 4;
     pointer-events: none;
     will-change: opacity;
   }
@@ -77,7 +93,7 @@
     top: 0; left: 0;
     height: 2px; width: 0%;
     background: #fff;
-    z-index: 6;
+    z-index: 7;
     transition: width .18s linear, opacity .45s ease .1s;
     will-change: width;
   }
@@ -88,7 +104,7 @@
     position: fixed;
     left: 0; right: 0;
     bottom: calc(30px + env(safe-area-inset-bottom, 0px));
-    z-index: 5;
+    z-index: 6;
     text-align: center;
     font-size: 13px;
     font-weight: 400;
@@ -123,7 +139,7 @@
     width: 100vw; height: 100vh;
     --capw: 100vw;
     --caph: 100vh;
-    z-index: 4;
+    z-index: 5;
     pointer-events: none;
   }
 
@@ -214,8 +230,11 @@
 
 <canvas id="stage"></canvas>
 
-<!-- Opening still, and the poster the frames load behind. -->
-<img id="intro" src="intro.jpeg" alt="" fetchpriority="high" decoding="async">
+<!-- The opening screen: frame one, which is also what the rest of the
+     strip loads behind, and the mark laid over it. intro.jpeg is still in
+     the repo, no longer wired to anything. -->
+<img id="poster" src="frames1/001.jpg" alt="" fetchpriority="high" decoding="async">
+<img id="logo" src="logo.png" alt="" fetchpriority="high" decoding="async">
 
 <div class="grad grad-top"></div>
 <div class="grad grad-bottom"></div>
@@ -485,7 +504,8 @@
   var ctx    = canvas.getContext('2d', { alpha: false });
   var bar    = document.getElementById('bar');
   var hint   = document.getElementById('hint');
-  var intro  = document.getElementById('intro');
+  var poster = document.getElementById('poster');
+  var logo   = document.getElementById('logo');
   var caps   = document.getElementById('caps');
   var root   = document.documentElement;
 
@@ -559,7 +579,7 @@
     ctx.fillRect(0, 0, cw, ch);
 
     var img = images[idx];
-    if (!img || !img.complete || !img.naturalWidth) { return; }
+    if (!img || !img.complete || !img.naturalWidth) { return false; }
 
     var iw = img.naturalWidth, ih = img.naturalHeight;
 
@@ -591,6 +611,58 @@
     }
 
     ctx.drawImage(img, dx, dy, dw, dh);
+    return true;
+  }
+
+  /* ---- where the frame lands, in CSS pixels --------------------------
+     draw() works in the canvas buffer, which is DPR-scaled; the DOM
+     layers over it need the same rectangle in CSS pixels. Same two lines
+     of arithmetic, deliberately not the seam-zoomed dx/dy/dw/dh: the
+     push-ins are a move inside the picture, and nothing hung off the
+     picture should breathe with them.
+
+     Null until frame one has decoded and its aspect is known.
+  ------------------------------------------------------------------ */
+  function frameRect(vw, vh) {
+    // Either source is frame one. The poster is in the markup, so it is
+    // requested during parse and usually decodes first; the logo can be
+    // placed on the loading screen that much sooner.
+    var img = (poster.complete && poster.naturalWidth) ? poster : images[0];
+    if (!img || !img.complete || !img.naturalWidth) { return null; }
+
+    var iw = img.naturalWidth, ih = img.naturalHeight;
+    var cover   = Math.max(vw / iw, vh / ih);
+    var contain = Math.min(vw / iw, vh / ih);
+    var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
+    var dw = iw * scale, dh = ih * scale;
+    return { dx: (vw - dw) / 2, dy: (vh - dh) / 2, dw: dw, dh: dh };
+  }
+
+  /* ---- the mark on the opening screen --------------------------------
+     Placed off dx/dy/dw/dh rather than off the window, so it keeps one
+     position relative to the photograph on every screen: a phone crops
+     the frame's sides away under cover and a landscape desktop letterboxes
+     it, and in both cases the mark travels with the picture instead of
+     with the glass. Width is a share of dw and height follows the file's
+     own 616x444, so it never stretches.
+  ------------------------------------------------------------------ */
+  var LOGO_W     = 0.4530;   // of dw
+  var LOGO_LEFT  = 0.2735;   // of dw, from dx
+  var LOGO_TOP   = 0.0300;   // of dh, from dy
+  var LOGO_RATIO = 1.387;    // logo.png is 616 x 444
+
+  var logoFit = '';
+
+  function fitLogo(r) {
+    if (!r) { return; }
+    var w = LOGO_W * r.dw;
+    var fit = r.dx + '/' + r.dy + '/' + r.dw + '/' + r.dh;
+    if (fit === logoFit) { return; }
+    logoFit = fit;
+    logo.style.left   = (r.dx + LOGO_LEFT * r.dw) + 'px';
+    logo.style.top    = (r.dy + LOGO_TOP  * r.dh) + 'px';
+    logo.style.width  = w + 'px';
+    logo.style.height = (w / LOGO_RATIO) + 'px';
   }
 
   /* ---- caption layer geometry ----------------------------------------
@@ -602,29 +674,18 @@
      disappear into it outright. So the layer is fitted to whatever part
      of the frame is actually on screen, and the type is sized off that
      width rather than off the viewport's.
-
-     Measured off the plain cover/contain fit, deliberately without the
-     seam zoom, so the two push-ins do not make the layer breathe.
   ------------------------------------------------------------------ */
   var capsFit = '';
 
-  function fitCaps() {
-    var vw = window.innerWidth  || root.clientWidth  || 1;
-    var vh = window.innerHeight || root.clientHeight || 1;
+  function fitCaps(vw, vh, r) {
     var l = 0, t = 0, w = vw, h = vh;
 
-    var img = images[0];
-    if (img && img.complete && img.naturalWidth) {
-      var iw = img.naturalWidth, ih = img.naturalHeight;
-      var cover   = Math.max(vw / iw, vh / ih);
-      var contain = Math.min(vw / iw, vh / ih);
-      var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
-      var dw = iw * scale, dh = ih * scale;
+    if (r) {
       // Intersected with the window: under cover the frame overflows it.
-      l = Math.max(0, (vw - dw) / 2);
-      t = Math.max(0, (vh - dh) / 2);
-      w = Math.min(vw, dw);
-      h = Math.min(vh, dh);
+      l = Math.max(0, r.dx);
+      t = Math.max(0, r.dy);
+      w = Math.min(vw, r.dw);
+      h = Math.min(vh, r.dh);
     }
 
     var fit = l + '/' + t + '/' + w + '/' + h;
@@ -638,8 +699,18 @@
     caps.style.setProperty('--caph', h + 'px');
   }
 
+  // One measurement of the window per frame, handed to both layers. Both
+  // early-out unless the rectangle actually moved.
+  function layout() {
+    var vw = window.innerWidth  || root.clientWidth  || 1;
+    var vh = window.innerHeight || root.clientHeight || 1;
+    var r  = frameRect(vw, vh);
+    fitLogo(r);
+    fitCaps(vw, vh, r);
+  }
+
   /* ---- overlay opacity ------------------------------------------------
-     The captions and the opening still are both pure functions of the
+     The captions and the opening mark are both pure functions of the
      scroll offset and of nothing else. No direction, no history, no
      observers, no transitions: the same y always produces the same
      opacity, so a caption looks identical on the way down and on the way
@@ -653,7 +724,9 @@
      rather than a mark on it, the camera is moving under the text the
      entire time. Outside the window it is flat 0; the divs are
      pointer-events: none in the stylesheet and stay that way, so an
-     invisible caption can never swallow a touch.
+     invisible caption can never swallow a touch. The mark takes the same
+     treatment on a simpler curve: full where the page opens, eased down
+     to nothing across the opening 6%, and pointer-events: none as well.
   ------------------------------------------------------------------ */
 
   var RAMP = 0.25;   // of the window eased in, and the same again eased out
@@ -670,12 +743,12 @@
     return 1;
   }
 
-  // How much scroll the opening still takes to clear, in screens. Short
-  // on purpose: a screen of scroll is about 31 frames at this spacer, so
-  // a longer dissolve would play the whole establishing shot behind the
-  // poster and run into the first caption's window at 0.93 screens.
-  var INTRO_FADE = 0.6;
-  var introShown = -1;
+  // The mark holds at 1 where the page opens and is gone by the time the
+  // first 6% of the page has gone by. Read off y like everything else
+  // here, so scrolling back up brings it back along the identical curve.
+  var LOGO_FADE  = 0.06;   // of the whole scrollable run
+  var logoShown  = -1;
+  var posterDown = false;
 
   function overlay(y) {
     var i, cap;
@@ -693,13 +766,29 @@
       }
     }
 
-    var io = 1 - easeInOut(clamp(y / (INTRO_FADE * M.vh), 0, 1));
-    if (io !== introShown) {
-      introShown = io;
-      intro.style.opacity = io;
-      // Drop the full-screen layer out of the compositor once it is gone.
-      intro.style.visibility = io > 0 ? 'visible' : 'hidden';
+    var lo = 1 - easeInOut(clamp(y / (LOGO_FADE * M.maxScroll), 0, 1));
+    if (lo !== logoShown) {
+      logoShown = lo;
+      logo.style.opacity = lo;
+      // Drop the layer out of the compositor once it is gone.
+      logo.style.visibility = lo > 0 ? 'visible' : 'hidden';
     }
+  }
+
+  // The canvas has a frame of its own up, so the still underneath it has
+  // nothing left to do. Both are frame one at this point, so there is
+  // nothing to dissolve and nothing to see.
+  //
+  // Held until the page unlocks even though the canvas can paint frame
+  // one long before that: the still is what the page shows for the whole
+  // load, and unlock() forces a repaint, so the handover has a definite
+  // moment instead of whichever tick happened to win the race. If that
+  // repaint finds nothing to draw — the stall timeout firing on a strip
+  // that never arrived — draw() reports false and the still just stays.
+  function retirePoster() {
+    if (posterDown || !ready) { return; }
+    posterDown = true;
+    poster.style.display = 'none';
   }
 
   /* ---- decode warm-up ------------------------------------------------
@@ -775,7 +864,7 @@
     if (window.innerHeight !== M.vh) { measure(); }
 
     var resized = resize();
-    fitCaps();
+    layout();
 
     var y = clamp(scrollTop(), 0, M.maxScroll);
     targetP = clamp(y / M.animEnd, 0, 1);
@@ -793,7 +882,7 @@
     overlay(y);
 
     if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
-      draw(idx);
+      if (draw(idx)) { retirePoster(); }
       lastIdx = idx; lastW = cw; lastH = ch;
     }
 
@@ -831,7 +920,7 @@
     bar.className = 'done';
     hint.className = 'show';
     measure();
-    fitCaps();             // the frames are in now, so their aspect is known
+    layout();              // the frames are in now, so their aspect is known
     lastIdx = -1;          // force one repaint at the new metrics
     kick();                // the loop may have parked while the page was locked
   }
