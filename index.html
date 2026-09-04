@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="format-detection" content="telephone=no">
 <title>Journey</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Assistant:wght@300&display=swap">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -40,11 +43,28 @@
   /* The only thing that actually scrolls. */
   #spacer { height: 1400vh; width: 100%; pointer-events: none; }
 
+  /* The opening still. It covers the canvas from the first paint, so it
+     is also the poster the page shows while the 409 frames come down the
+     wire, and the loop dissolves it out over the opening stretch of the
+     scroll. Same cover fit the canvas does, so nothing jumps when it
+     goes. */
+  #intro {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: center;
+    background: #000;
+    z-index: 2;
+    pointer-events: none;
+    will-change: opacity;
+  }
+
   /* Soft black falloff, top and bottom. */
   .grad {
     position: fixed; left: 0; right: 0;
     height: 20vh;
-    z-index: 2;
+    z-index: 3;
     pointer-events: none;
     opacity: .85;
   }
@@ -57,7 +77,7 @@
     top: 0; left: 0;
     height: 2px; width: 0%;
     background: #fff;
-    z-index: 5;
+    z-index: 6;
     transition: width .18s linear, opacity .45s ease .1s;
     will-change: width;
   }
@@ -68,7 +88,7 @@
     position: fixed;
     left: 0; right: 0;
     bottom: calc(30px + env(safe-area-inset-bottom, 0px));
-    z-index: 4;
+    z-index: 5;
     text-align: center;
     font-size: 13px;
     font-weight: 400;
@@ -82,6 +102,109 @@
   #hint.show { opacity: 1; }
   #hint.hide { opacity: 0; }
 
+  /* ------------------------------------------------------------------
+     Captions.
+     A layer of HTML sitting over the canvas, never text burnt into a
+     frame: the JPGs stay clean and the type stays vector at any DPR.
+     Each caption is one absolutely positioned div and the scroll loop
+     writes nothing on it but opacity — no transform, no transition, so
+     there is no direction for it to disagree about.
+
+     Type is a single ratio: the caption box carries the heading size,
+     the English inherits it, and the Hebrew is .45em of it. The size
+     itself comes off --capw, the width of the frame actually on screen,
+     which fitCaps() writes — see it for why that is not just the window.
+     The values here are the fallback for before it first runs, and on a
+     phone they are also the answer.
+  ------------------------------------------------------------------ */
+  #caps {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    --capw: 100vw;
+    --caph: 100vh;
+    z-index: 4;
+    pointer-events: none;
+  }
+
+  /* Nothing here is interactive, so the divs never take a tap — least of
+     all while they are sitting at opacity 0 over a live canvas. */
+  .cap {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    will-change: opacity;
+  }
+
+  .cap .en {
+    direction: ltr;
+    unicode-bidi: isolate;
+    font-family: "Cormorant Garamond", "Times New Roman", Georgia, serif;
+    font-weight: 300;
+    font-style: normal;
+    text-transform: uppercase;
+    letter-spacing: .18em;
+    line-height: 1.32;
+  }
+
+  /* Two deliberate lines, not two the wrap happens to give us. */
+  .cap .en span { display: block; white-space: nowrap; }
+
+  .cap .he {
+    direction: rtl;
+    font-family: "Assistant", "Heebo", "Rubik", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    font-weight: 300;
+    font-size: .45em;
+    line-height: 1.85;
+    letter-spacing: 0;
+    max-width: 22em;
+    margin-top: 1.7em;   /* .45em deep, so ~.77 of the heading size */
+  }
+
+  /* 1 — the facade, one line across the middle of the screen. Scaled off
+     the frame width so it holds that one line down to a 320px phone. */
+  .cap-1 {
+    left: 0; right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 20px;
+    text-align: center;
+    color: #fff;
+    font-size: clamp(10px, calc(var(--capw) * .0305), 25px);
+  }
+  .cap-1 .en {
+    white-space: nowrap;
+    text-shadow: 0 1px 18px rgba(0, 0, 0, .38);
+  }
+
+  /* 2 — the terrace, top right, over sky. */
+  .cap-2 {
+    top: calc(8.5% + env(safe-area-inset-top, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
+    left: calc(22px + env(safe-area-inset-left, 0px));
+    text-align: right;
+    color: #fff;
+    font-size: clamp(25px, calc(var(--capw) * .078), 38px);
+  }
+  .cap-2 .he { margin-left: auto; margin-right: 0; }
+  /* Letter-spacing leaves a trailing gap after the last glyph; pull it
+     back so the caps line up with the Hebrew edge rather than 0.18em off. */
+  .cap-2 .en { margin-right: -.18em; }
+  .cap-2 .en, .cap-2 .he { text-shadow: 0 1px 18px rgba(0, 0, 0, .38); }
+
+  /* 3 — the last frame, top left. Dark, because the room is bright there:
+     white would disappear into the ceiling. */
+  .cap-3 {
+    top: calc(8.5% + env(safe-area-inset-top, 0px));
+    left: calc(22px + env(safe-area-inset-left, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
+    text-align: left;
+    color: #17191b;
+    font-size: clamp(25px, calc(var(--capw) * .078), 38px);
+  }
+  .cap-3 .he { margin-right: auto; margin-left: 0; }
+  .cap-3 .en, .cap-3 .he { text-shadow: 0 1px 16px rgba(255, 255, 255, .55); }
+
   @media (prefers-reduced-motion: reduce) {
     #bar { transition: none; }
   }
@@ -91,8 +214,29 @@
 
 <canvas id="stage"></canvas>
 
+<!-- Opening still, and the poster the frames load behind. -->
+<img id="intro" src="intro.jpeg" alt="" fetchpriority="high" decoding="async">
+
 <div class="grad grad-top"></div>
 <div class="grad grad-bottom"></div>
+
+<!-- Three captions, positioned over the canvas and driven by scroll
+     position alone. See the caption block in the script. -->
+<div id="caps">
+  <div class="cap cap-1" id="cap1">
+    <div class="en"><span>Life feels different from above</span></div>
+  </div>
+
+  <div class="cap cap-2" id="cap2">
+    <div class="en"><span>Open sky</span><span>living</span></div>
+    <p class="he">מרפסת רחבת ידיים שמרגישה כמו גינה פרטית — לאירוח, לשקט ולחיים תחת שמיים פתוחים.</p>
+  </div>
+
+  <div class="cap cap-3" id="cap3">
+    <div class="en"><span>One seamless</span><span>space</span></div>
+    <p class="he">סלון, פינת אוכל ומרפסת מתחברים לחלל אחד פתוח ומואר — הכול נפתח אל הנוף.</p>
+  </div>
+</div>
 
 <div id="bar"></div>
 <div id="hint">גלול</div>
@@ -176,19 +320,78 @@
     6.9,6.9,4.43,6.3,4.22,5.73,4.55,5.97,4.12,5.31,4.98,3.33,4.55,3.04,4.6,2.98,4.37,2.94,4.24,4.26,3.04,4.52,3.19,4.51,3.04,4.59,3.06,4.6,3.17,4.56,4.62,3.25,4.7,3.24,4.42,3.13,4.55,3.04,4.82,4.66,3.08,4.52,3.07,4.09,2.88,4.35,2.98,4.25,1.58,3.09,2.09,3.17,2.08,3.06,2.09,3.16,2.21,3.3,3.43,2.29,3.33,2.34,3.42,2.4,3.53,2.38,3.63,3.69,2.63,3.83,2.69,3.89,2.67,4.14,2.84,4.1,2.78,3.96,3.99,2.97,4.3,2.96,4.12,2.85,4.07,2.78,4.12,28.04,26.43,26.79,25.12,25.18,24.66,24.18,22.97,22.29,1.88,2.08,1.85,2,2.54,3.11,3.57,3.56,4.32,4.93,5.19,5.5,6.24,6.09,6.79,10.74,7.94,8.76,9.58,10.32,10.27,11.07,11.85,12.96,13.63,14.72,14.84,15.54,16.98,17.46,19.24,20.15,17.52,17.17,18.54,19.21,20.1,21.65,23.89,23.34,23.88,26.49,34.56,35.66,23.7,40.52,20.17,18.72,17.72,16.08,16.53,15.08,9.74,4.57,3.96,3.52,3,2.5,1.85,1.38,4.11,2.04,2.1,2.46,2.82,4.73,3.42,5.51,4.09,6.52,7.03,7.4,5.75,9.11,8.57,9.62,6.82,10.03,7.47,7.77,8.04,12.18,8.84,8.94,9.42,9.35,10.17,9.85,9.98,9.23,9.95,9.38,9.91,8.49,8.62,11.02,7.36,10.3,7.37,7.08,9.35,6.74,8.72,7.31,6.75,7.93,6.08,11.32,5.57,5.82,5.67,6,6.17,6.3,6.88,7.23,7.13,7.33,7.34,7.75,7.93,8.51,8.66,9.12,9.08,9.74,10.16,9.99,10.1,9.85,9.21,8.63,8.03,7.62,6.94,6.16,5.64,5.11,4.41,3.73,3.55,3.17,2.87,2.91,2.87,3.01,2.86,6.33,1.84,0.88,1.23,0.85,1.2,0.86,1.27,0.9,1.12,1.16,0.81,1.13,0.84,1.21,0.83,1.23,0.87,1.26,1.33,0.86,1.28,0.96,1.3,0.92,1.39,0.93,1.41,1,1.39,1.45,1.08,1.52,1.09,1.6,1.1,1.6,1.08,1.68,2.72,2.5,2.75,2.58,2.97,2.8,2.98,2.63,3.14,13.51,1.52,1.49,1.37,1.6,1.41,1.25,1.41,1.27,1.25,1.4,1.45,1.47,1.39,1.42,1.35,1.33,1.43,1.42,1.24,1.43,1.33,1.37,1.32,1.36,1.4,1.33,1.12,1.23,1.37,1.64,1.18,1.05,1.2,1.42,1.3,1.1,1.18,1.24,1.3,1.31,1.18,1.51,1.16,1.16,1.16,1.48,1.18,1.1,1.2,1.38,1.04,1.14,1.25,1.29,1.54,1.43,1.29,1.26,1.22,1.21,0.86,3.33,2.5,2.47,3.14,2.19,2.41,2.21,2.14,2.16,2.99,2.36,2.8,2.4,2.28,2.88,2.22,2.26,2.46,2.22,2.23,2.29,1.6,2.3,1.58,1.52,1.62,1.61,1.57,1.54,1.59,1.66,1.62,0.8,1.59,1.78,0.9,0.9,1.61,0.82,1.63,0.88,0.92,0.95,1.71,0.88,0.84,0.88,0.96,0.91,0.96,0.9,0.84,1,0.99,1.02,1.03
   ];
 
+  /* ------------------------------------------------------------------
+     Caption windows.
+     Three stretches of the strip carry a caption, and each one is
+     written here once, as a frame range, because it does two jobs: it
+     is the scroll window the caption's opacity is read out of, and it
+     is the stretch whose frames take CAPTION_BOOST times the slice of
+     the spacer the pacing map would otherwise hand them. A line of type
+     needs seconds, not the third of a second the raw pacing gives these
+     frames, and slowing the frames is the only way to buy them without
+     freezing the camera — which keeps moving under the text throughout.
+
+     The boost lands after the PACE clamp rather than before it. The
+     facade pass is already sitting on PACE_MAX, so a boost applied to
+     the raw value would be clamped straight back off; applied after,
+     the ceiling has already done its job of flattening the 50x spread
+     and the caption stretches ride on top of it.
+
+     It is still only a redistribution. Everything is renormalised below,
+     so the spacer stays exactly 1400vh and the three windows are paid
+     for by the rest of the strip giving up a little each. Frame order,
+     TOTAL and both seam calibrations are untouched — the seams key off
+     the frame index, not off scroll, so no amount of repacing moves
+     them.
+  ------------------------------------------------------------------ */
+  var CAPTION_BOOST = 2.5;
+
+  // 0-based strip index of a 1-based frame inside a folder. Summed off
+  // SEQ for the same reason CLIP5_START is: a count could change.
+  function gframe(dir, local) {
+    var n = 0;
+    for (var q = 0; q < SEQ.length; q++) {
+      if (SEQ[q].dir === dir) { return n + local - 1; }
+      n += SEQ[q].count;
+    }
+    return 0;
+  }
+
+  var CAPTIONS = [
+    // Climbing the facade, balcony over balcony.
+    { id: 'cap1', from: gframe('frames2',   10), to: gframe('frames3',   8) },
+    // Over the parapet onto the terrace, flame tree on the right.
+    { id: 'cap2', from: gframe('frames3',   46), to: gframe('frames4',  26) },
+    // The tail of the strip. `hold` carries the window past the last
+    // frame and across the held screen, so the text is at full opacity
+    // when frames10/057 arrives and clears as the page settles.
+    { id: 'cap3', from: gframe('frames10',  36), to: gframe('frames10', 57), hold: true }
+  ];
+
   // Cumulative scroll fraction at the end of each frame's slice.
   var PACE_CUM = (function () {
-    var i, n = PACE.length, sum = 0;
+    var i, k, n = PACE.length, sum = 0;
     for (i = 0; i < n; i++) { sum += PACE[i]; }
     var mean = sum / n, lo = PACE_MIN * mean, hi = PACE_MAX * mean;
-    var acc = 0, c = new Array(n);
+    var v = new Array(n);
     for (i = 0; i < n; i++) {
-      var v = PACE[i] < lo ? lo : (PACE[i] > hi ? hi : PACE[i]);
-      acc += v; c[i] = acc;
+      v[i] = PACE[i] < lo ? lo : (PACE[i] > hi ? hi : PACE[i]);
     }
+    for (k = 0; k < CAPTIONS.length; k++) {
+      for (i = CAPTIONS[k].from; i <= CAPTIONS[k].to; i++) { v[i] *= CAPTION_BOOST; }
+    }
+    var acc = 0, c = new Array(n);
+    for (i = 0; i < n; i++) { acc += v[i]; c[i] = acc; }
     for (i = 0; i < n; i++) { c[i] /= acc; }
     return c;
   })();
+
+  // Each window as a pair of scroll fractions, read off the finished map
+  // so the boost above and the numbers below can never disagree.
+  for (var cq = 0; cq < CAPTIONS.length; cq++) {
+    CAPTIONS[cq].a = CAPTIONS[cq].from > 0 ? PACE_CUM[CAPTIONS[cq].from - 1] : 0;
+    CAPTIONS[cq].b = PACE_CUM[CAPTIONS[cq].to];
+  }
 
   // Which frame is showing at scroll fraction p. Binary search, ~9 steps.
   function frameAt(p) {
@@ -282,7 +485,14 @@
   var ctx    = canvas.getContext('2d', { alpha: false });
   var bar    = document.getElementById('bar');
   var hint   = document.getElementById('hint');
+  var intro  = document.getElementById('intro');
+  var caps   = document.getElementById('caps');
   var root   = document.documentElement;
+
+  for (var cn = 0; cn < CAPTIONS.length; cn++) {
+    CAPTIONS[cn].node  = document.getElementById(CAPTIONS[cn].id);
+    CAPTIONS[cn].shown = -1;    // last opacity written, so we write once per change
+  }
 
   var images = new Array(TOTAL);
   var ready  = false;
@@ -383,6 +593,115 @@
     ctx.drawImage(img, dx, dy, dw, dh);
   }
 
+  /* ---- caption layer geometry ----------------------------------------
+     The captions belong to the picture, not to the window. On a phone
+     those are the same rectangle — cover fills the screen — and this
+     changes nothing. On a landscape desktop draw() letterboxes the frame
+     onto black instead, and a caption pinned to the window's corner
+     would be sitting on that black: the dark one on the last frame would
+     disappear into it outright. So the layer is fitted to whatever part
+     of the frame is actually on screen, and the type is sized off that
+     width rather than off the viewport's.
+
+     Measured off the plain cover/contain fit, deliberately without the
+     seam zoom, so the two push-ins do not make the layer breathe.
+  ------------------------------------------------------------------ */
+  var capsFit = '';
+
+  function fitCaps() {
+    var vw = window.innerWidth  || root.clientWidth  || 1;
+    var vh = window.innerHeight || root.clientHeight || 1;
+    var l = 0, t = 0, w = vw, h = vh;
+
+    var img = images[0];
+    if (img && img.complete && img.naturalWidth) {
+      var iw = img.naturalWidth, ih = img.naturalHeight;
+      var cover   = Math.max(vw / iw, vh / ih);
+      var contain = Math.min(vw / iw, vh / ih);
+      var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
+      var dw = iw * scale, dh = ih * scale;
+      // Intersected with the window: under cover the frame overflows it.
+      l = Math.max(0, (vw - dw) / 2);
+      t = Math.max(0, (vh - dh) / 2);
+      w = Math.min(vw, dw);
+      h = Math.min(vh, dh);
+    }
+
+    var fit = l + '/' + t + '/' + w + '/' + h;
+    if (fit === capsFit) { return; }
+    capsFit = fit;
+    caps.style.left   = l + 'px';
+    caps.style.top    = t + 'px';
+    caps.style.width  = w + 'px';
+    caps.style.height = h + 'px';
+    caps.style.setProperty('--capw', w + 'px');
+    caps.style.setProperty('--caph', h + 'px');
+  }
+
+  /* ---- overlay opacity ------------------------------------------------
+     The captions and the opening still are both pure functions of the
+     scroll offset and of nothing else. No direction, no history, no
+     observers, no transitions: the same y always produces the same
+     opacity, so a caption looks identical on the way down and on the way
+     back up, and a flick that overshoots and springs back does not leave
+     one half-faded.
+
+     The curve is spread across the whole window rather than fired at a
+     point. Over a caption's window it eases up across the first quarter,
+     holds at 1 through the middle half, and eases back down across the
+     last quarter — and because the window is a stretch of the strip
+     rather than a mark on it, the camera is moving under the text the
+     entire time. Outside the window it is flat 0; the divs are
+     pointer-events: none in the stylesheet and stay that way, so an
+     invisible caption can never swallow a touch.
+  ------------------------------------------------------------------ */
+
+  var RAMP = 0.25;   // of the window eased in, and the same again eased out
+
+  function easeInOut(t) {
+    return t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+  }
+
+  function windowOpacity(y, a, b) {
+    if (y <= a || y >= b || b <= a) { return 0; }
+    var t = (y - a) / (b - a);
+    if (t < RAMP)     { return easeInOut(t / RAMP); }
+    if (t > 1 - RAMP) { return easeInOut((1 - t) / RAMP); }
+    return 1;
+  }
+
+  // How much scroll the opening still takes to clear, in screens. Short
+  // on purpose: a screen of scroll is about 31 frames at this spacer, so
+  // a longer dissolve would play the whole establishing shot behind the
+  // poster and run into the first caption's window at 0.93 screens.
+  var INTRO_FADE = 0.6;
+  var introShown = -1;
+
+  function overlay(y) {
+    var i, cap;
+    for (i = 0; i < CAPTIONS.length; i++) {
+      cap = CAPTIONS[i];
+      if (!cap.node) { continue; }
+      // Fractions are of the animated run; `hold` reaches past its end,
+      // over the screen the last frame is held for.
+      var a = cap.a * M.animEnd;
+      var b = cap.hold ? M.maxScroll : cap.b * M.animEnd;
+      var o = windowOpacity(y, a, b);
+      if (o !== cap.shown) {
+        cap.shown = o;
+        cap.node.style.opacity = o;
+      }
+    }
+
+    var io = 1 - easeInOut(clamp(y / (INTRO_FADE * M.vh), 0, 1));
+    if (io !== introShown) {
+      introShown = io;
+      intro.style.opacity = io;
+      // Drop the full-screen layer out of the compositor once it is gone.
+      intro.style.visibility = io > 0 ? 'visible' : 'hidden';
+    }
+  }
+
   /* ---- decode warm-up ------------------------------------------------
      Rasterising a warm frame measures ~0ms; the only real cost in the
      loop is the synchronous JPEG decode drawImage is forced into the
@@ -456,6 +775,7 @@
     if (window.innerHeight !== M.vh) { measure(); }
 
     var resized = resize();
+    fitCaps();
 
     var y = clamp(scrollTop(), 0, M.maxScroll);
     targetP = clamp(y / M.animEnd, 0, 1);
@@ -467,6 +787,10 @@
     else { shownP += (targetP - shownP) * CHASE; }
 
     var idx = frameAt(shownP);
+
+    // Off the raw scroll, not off the eased playhead: shownP is a
+    // function of how you got here, y is a function of where you are.
+    overlay(y);
 
     if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
       draw(idx);
@@ -507,6 +831,7 @@
     bar.className = 'done';
     hint.className = 'show';
     measure();
+    fitCaps();             // the frames are in now, so their aspect is known
     lastIdx = -1;          // force one repaint at the new metrics
     kick();                // the loop may have parked while the page was locked
   }
