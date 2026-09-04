@@ -38,7 +38,7 @@
   }
 
   /* The only thing that actually scrolls. */
-  #spacer { height: 3100vh; width: 100%; pointer-events: none; }
+  #spacer { height: 5558vh; width: 100%; pointer-events: none; }
 
   /* Soft black falloff, top and bottom. */
   .grad {
@@ -107,14 +107,20 @@
   'use strict';
 
   /* ------------------------------------------------------------------
-     Sequence: three folders read back to back as one continuous strip.
-     frames1 001-048  ->  frames2 001-048  ->  frames3 001-060  =  156
+     Sequence: eight folders read back to back as one continuous strip.
+     frames1 001-048  ->  frames2 001-048  ->  frames3 001-060  ->
+     frames4 001-087  ->  frames5 001-048  ->  frames6 001-048  ->
+     frames7 001-048  ->  frames8 001-048  =  435
   ------------------------------------------------------------------ */
   var SEQ = [
     { dir: 'frames1', count: 48 },
     { dir: 'frames2', count: 48 },
     { dir: 'frames3', count: 60 },
-    { dir: 'frames4', count: 87 }
+    { dir: 'frames4', count: 87 },
+    { dir: 'frames5', count: 48 },
+    { dir: 'frames6', count: 48 },
+    { dir: 'frames7', count: 48 },
+    { dir: 'frames8', count: 48 }
   ];
 
   var urls = [];
@@ -125,7 +131,7 @@
       urls.push(SEQ[s].dir + '/' + num + '.jpg');
     }
   }
-  var TOTAL = urls.length;          // 156
+  var TOTAL = urls.length;          // 435
   var CLIP1_COUNT = SEQ[0].count;   // 48 — where frames2 starts
 
   /* ------------------------------------------------------------------
@@ -272,8 +278,8 @@
      the playhead while the main thread is idle, one at a time, and the
      first trip down the page costs what every later trip costs.
 
-     Deliberately a short rolling window rather than all 156 up front:
-     156 decoded 810x1437 frames is far more than iOS will hold at once,
+     Deliberately a short rolling window rather than all 435 up front:
+     435 decoded 810x1437 frames is far more than iOS will hold at once,
      so asking for them only thrashes the cache and risks the tab.
   ------------------------------------------------------------------ */
   var WARM_AHEAD = 12;
