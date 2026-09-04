@@ -134,6 +134,14 @@
   var TOTAL = urls.length;          // 435
   var CLIP1_COUNT = SEQ[0].count;   // 48 — where frames2 starts
 
+  // 0-based index of frames7 001, summed off SEQ rather than written down,
+  // so the second seam cannot drift if a count above it ever changes.
+  var CLIP7_START = (function () {
+    var n = 0;
+    for (var q = 0; q < SEQ.length && SEQ[q].dir !== 'frames7'; q++) { n += SEQ[q].count; }
+    return n;
+  })();
+
   /* ------------------------------------------------------------------
      clip2 -> clip3 seam.
      clip3 opens on a 1.4x magnified framing of clip2's final frame, so
@@ -158,6 +166,39 @@
   var ANCHOR_X   = 0.220;   // fraction of frame width
   var ANCHOR_Y   = 0.010;   // fraction of frame height
 
+  /* ------------------------------------------------------------------
+     frames7 -> frames8 seam.
+     The second cut, and a different animal from the first. 04.mp4 opens
+     already pushed past the glass, so the tail of frames7 has to travel
+     to meet it.
+
+     Fitted the same way — frames8's opening frame matched against
+     frames7's closing frame over (zoom, anchor) — but sharpness had to be
+     equalised first: frames7 is upscaled from 720x1280 and frames8 is
+     downscaled from 1080x1916, so an unequalised score grades focus
+     rather than geometry. Three fits agree to the third decimal: whole
+     frame, the on-screen crop alone, and a direct search on the rendered
+     viewport. Correlation 0.64 over the full frame, 0.70 over the part
+     the phone actually shows.
+
+     Unlike the first seam this one does not disappear, and that ceiling
+     is real rather than a slack fit. clip2 -> clip3 was a pure
+     magnification of a static exterior, so a zoom reproduces it and the
+     cut measures ~2. This is an interior dolly: the near chair and the
+     far pool move at different rates, and no single zoom — no global 2D
+     transform at all — holds both. So the aim here is different. The
+     ramp drops the cut from ~48 to ~25, which is the same size as one
+     step inside the ramp itself (~20), and a step that matches its
+     neighbours reads as motion rather than as a join. Lengthening the
+     ramp makes this worse, not better: it slows the surrounding steps
+     until the cut stands proud of them again.
+  ------------------------------------------------------------------ */
+  var S7_FROM     = 39;      // 1-based frame inside frames7, zoom = 1.0
+  var S7_TO       = 48;      // 1-based frame inside frames7, zoom = S7_ZOOM_MAX
+  var S7_ZOOM_MAX = 1.485;
+  var S7_ANCHOR_X = 0.064;   // fraction of frame width
+  var S7_ANCHOR_Y = 0.457;   // fraction of frame height
+
   // How far cover may crop before the frame is letterboxed instead.
   // 1.0 = never crop, Infinity = always fill. iPhone measures ~1.04 here,
   // so phones always take the cover path.
@@ -168,6 +209,13 @@
     if (local < ZOOM_FROM || local > ZOOM_TO) { return 1; }
     var t = (local - ZOOM_FROM) / (ZOOM_TO - ZOOM_FROM);
     return 1 + (ZOOM_MAX - 1) * t;
+  }
+
+  function zoomFor7(idx) {
+    var local = idx - CLIP7_START + 1;              // 1-based inside frames7
+    if (local < S7_FROM || local > S7_TO) { return 1; }
+    var t = (local - S7_FROM) / (S7_TO - S7_FROM);
+    return 1 + (S7_ZOOM_MAX - 1) * t;
   }
 
   /* ------------------------------------------------------------------ */
@@ -258,14 +306,20 @@
     var dw = iw * scale, dh = ih * scale;
     var dx = (cw - dw) / 2, dy = (ch - dh) / 2;
 
-    var z = zoomFor(idx);
+    // Two seams, and the ramps never overlap, so first one wins.
+    var z  = zoomFor(idx);
+    var ax = ANCHOR_X, ay = ANCHOR_Y;
+    if (z === 1) {
+      z  = zoomFor7(idx);
+      ax = S7_ANCHOR_X; ay = S7_ANCHOR_Y;
+    }
     if (z !== 1) {
       // Scale about the anchor so that point stays put on screen.
-      var px = dx + ANCHOR_X * dw;
-      var py = dy + ANCHOR_Y * dh;
+      var px = dx + ax * dw;
+      var py = dy + ay * dh;
       dw *= z; dh *= z;
-      dx = px - ANCHOR_X * dw;
-      dy = py - ANCHOR_Y * dh;
+      dx = px - ax * dw;
+      dy = py - ay * dh;
     }
 
     ctx.drawImage(img, dx, dy, dw, dh);
