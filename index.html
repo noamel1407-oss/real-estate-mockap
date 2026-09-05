@@ -773,15 +773,24 @@
      it, which is the one the camera was last standing on, and only look
      forward if there is nothing behind at all.
 
-     In practice the first branch answers, and the walk never runs: the
-     loader works in strip order, so everything behind the playhead has
-     already landed unless the reader has outrun the download. Bounded by
-     TOTAL in the worst case, which is a few hundred property reads on a
-     frame that would otherwise be blank.
+     There are two ways to arrive here without the frame: the loader has
+     not reached it yet, or the sliding window let it go and the reader has
+     come back for it. Both are answered the same way — paint the nearest
+     neighbour and ask for the real one at the head of the queue — and the
+     pinned head of the strip guarantees the backward walk always finds
+     something once frame one is in.
+
+     Bounded by TOTAL in the worst case, which is a few hundred property
+     reads on a frame that would otherwise be blank.
   ------------------------------------------------------------------ */
   function paintable(idx) {
     var im = images[idx], i;
     if (im && im.complete && im.naturalWidth) { return idx; }
+
+    // Wanted now and not here: to the front of the queue, ahead of the
+    // sequential walk, and refill the window around it while we are at it.
+    refill(idx);
+
     for (i = idx - 1; i >= 0; i--) {
       im = images[i];
       if (im && im.complete && im.naturalWidth) { return i; }
@@ -1100,6 +1109,76 @@
   var warmBusy = false;
   var warmed = new Array(TOTAL + 1);   // the last slot is the descent strip
 
+  /* ---- the sliding window --------------------------------------------
+     Measured before this existed: the renderer sat at 254MB when the page
+     unlocked, 386MB once all 409 had arrived, and 809MB after one walk
+     down the page — of which 3MB came back on the walk up. Nothing was
+     ever released. images[] is held in this closure for the life of the
+     page, so every frame that had ever been requested stayed both encoded
+     and, as far as the browser cared to keep it, decoded. Fully decoded
+     that set is 2.2GB, and iOS kills a tab long before.
+
+     So frames outside a window around the playhead are dropped. Dropping
+     images[i] is what actually frees them: the encoded bytes are pinned by
+     the live Image object and no browser may discard those, only the
+     decoded bitmap behind them.
+
+     The window is not symmetric. Forward is the direction of travel and
+     the one that must never meet a synchronous decode, so it reaches more
+     than twice as far ahead as behind. Backward still reaches far enough
+     that a reader who changes their mind mid-gesture is inside it.
+
+     Two stretches are never dropped. The head, because the opening screen
+     is where every reader starts and where they come back to, and because
+     frameRect() reads images[0] for the geometry every overlay is placed
+     against — losing it would move the mark and the captions. The tail,
+     because the end of the journey is held for a full screen and is the
+     one frame most likely to be sat on. The descent strip is a variable of
+     its own rather than a slot in images[], so it is pinned by
+     construction and this never touches it.
+  ------------------------------------------------------------------ */
+  var KEEP_BACK  = 40;    // frames retained behind the playhead
+  var KEEP_AHEAD = 90;    // and ahead of it, where the travel is
+  var PIN_HEAD   = 16;    // frames 0..15, never dropped
+  var PIN_TAIL   = 8;     // and the last 8, whatever TOTAL becomes
+
+  // Throttle: a sweep is worth running when a quarter second has gone by,
+  // or when the playhead has moved far enough that the window has really
+  // changed shape. Not on every scroll event, and not on every frame.
+  var SWEEP_MS     = 250;
+  var SWEEP_FRAMES = 10;
+  var sweepT = -1e9, sweepIdx = -1e9;
+
+  function pinnedFrame(i) {
+    return i < PIN_HEAD || i >= TOTAL - PIN_TAIL;
+  }
+
+  function evict(idx, now) {
+    if (now - sweepT < SWEEP_MS &&
+        (idx - sweepIdx < SWEEP_FRAMES) && (sweepIdx - idx < SWEEP_FRAMES)) {
+      return;
+    }
+    sweepT = now; sweepIdx = idx;
+
+    var lo = idx - KEEP_BACK, hi = idx + KEEP_AHEAD;
+    for (var i = 0; i < TOTAL; i++) {
+      if (i >= lo && i <= hi) { continue; }
+      if (pinnedFrame(i)) { continue; }
+      // A request already on the wire owns its Image; dropping the only
+      // reference to it mid-flight buys nothing and loses the download.
+      if (busy[i]) { continue; }
+      if (!images[i]) { continue; }
+      images[i] = null;
+      warmed[i] = false;    // it will need decoding again if it comes back
+    }
+
+    // And top the window back up. paintable() also calls this, but only
+    // once the picture has already had to settle for a neighbour — doing
+    // it here as well means the frames ahead are being fetched before the
+    // playhead reaches them rather than a frame after.
+    refill(idx);
+  }
+
   // Returns whether the walker still has ground to cover. The loop reads
   // that to decide if it may idle: stopping mid-window would leave the next
   // few frames undecoded and hand the cost straight back to the next flick.
@@ -1194,6 +1273,13 @@
     else { shownD += (targetD - shownD) * CHASE; }
 
     var idx = frameAt(shownP);
+
+    // Drop what the window has left behind. Throttled inside — a quarter
+    // second, or ten frames of travel, whichever comes first — so this is
+    // a few hundred property reads a handful of times a second and not a
+    // sweep on every paint.
+    evict(idx, (window.performance && performance.now) ? performance.now()
+                                                       : Date.now());
 
     // Off the raw scroll, not off the eased playhead: shownP is a
     // function of how you got here, y is a function of where you are.
@@ -1310,14 +1396,60 @@
   var GATE         = Math.min(48, TOTAL);   // held for the first folder
   var MAX_PARALLEL = 6;
 
-  var queueAt  = 0;    // next slot to request
+  var queueAt  = 0;    // next slot the sequential walk will request
   var inFlight = 0;
   var gateDone = 0;    // of the first GATE, settled either way
   var stall    = null;
   var loadT0   = 0;    // for the unlock timing reported in the console
 
+  /* The sequential walk downloads every frame once, in strip order, and
+     the window above drops most of them again shortly after they land.
+     That is deliberate and it is not wasted: the walk is what fills the
+     browser's HTTP cache, so a frame the window dropped comes back off
+     the disk rather than off the network. The alternative — holding the
+     walk at the window's forward edge — would save bandwidth and spend it
+     on a reader who scrolls faster than the window can be refilled.
+
+     urgent is the priority lane in front of that walk: frames the playhead
+     is asking for right now, which is how a dropped frame gets back. busy
+     marks a slot whose request is on the wire, which is both what stops a
+     frame being requested twice and what stops the sweep dropping an Image
+     that is still downloading into. */
+  var urgent = [];
+  var busy   = [];
+  var URGENT_CAP = 24;
+
+  function want(i) {
+    if (i < 0 || i >= LOAD_TOTAL) { return false; }
+    if (busy[i]) { return false; }
+    var im = (i === TOTAL) ? strip : images[i];
+    if (im && im.complete && im.naturalWidth) { return false; }
+    for (var k = 0; k < urgent.length; k++) {
+      if (urgent[k] === i) { return false; }
+    }
+    urgent.push(i);
+    return true;
+  }
+
+  // Ask for what the window is missing, nearest first and forward before
+  // back. Called from paintable(), so it runs exactly when the picture has
+  // had to settle for a neighbour — and capped, because a reader who flicks
+  // across the whole page would otherwise queue hundreds of frames that the
+  // window will have moved past by the time they arrive.
+  function refill(idx) {
+    var added = false;
+    for (var k = 0; k <= KEEP_AHEAD && urgent.length < URGENT_CAP; k++) {
+      if (want(idx + k)) { added = true; }
+      if (k > 0 && k <= KEEP_BACK && urgent.length < URGENT_CAP) {
+        if (want(idx - k)) { added = true; }
+      }
+    }
+    if (added) { pump(); }
+  }
+
   function slotDone(i) {
     inFlight--;
+    busy[i] = false;
 
     if (i < GATE) {
       gateDone++;
@@ -1337,19 +1469,34 @@
     pump();
   }
 
+  function request(i) {
+    if (busy[i]) { return; }
+    busy[i] = true;
+    // One past the last frame is the descent strip: it is simply the next
+    // thing the journey needs, so it queues in its own place rather than
+    // competing with the frames above it.
+    var img = (i === TOTAL) ? strip : new Image();
+    if (i !== TOTAL) { images[i] = img; }
+    img.decoding = 'async';
+    img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
+    img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
+    inFlight++;
+    img.src = (i === TOTAL) ? STRIP_SRC : urls[i];
+  }
+
   function pump() {
+    // The priority lane first: these are frames the playhead is standing on
+    // or about to reach, and they are the difference between a stutter and
+    // a hold. shift() rather than a scan, so a flood cannot starve them.
+    while (inFlight < MAX_PARALLEL && urgent.length) {
+      request(urgent.shift());
+    }
     while (inFlight < MAX_PARALLEL && queueAt < LOAD_TOTAL) {
       var i = queueAt++;
-      // One past the last frame is the descent strip: it is simply the next
-      // thing the journey needs, so it queues in its own place rather than
-      // competing with the frames above it.
-      var img = (i === TOTAL) ? strip : new Image();
-      if (i !== TOTAL) { images[i] = img; }
-      img.decoding = 'async';
-      img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
-      img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
-      inFlight++;
-      img.src = (i === TOTAL) ? STRIP_SRC : urls[i];
+      var im = (i === TOTAL) ? strip : images[i];
+      // Already in hand, or already on the wire from the lane above.
+      if (busy[i] || (im && im.complete && im.naturalWidth)) { continue; }
+      request(i);
     }
   }
 
@@ -1362,6 +1509,10 @@
   measure();
   resize();
   smoothing();          // resize() only sets it when the size actually changes
+  // Before draw(0), which finds images[0] empty and starts the download
+  // through refill() — the clock has to be running by then or the unlock
+  // timing below it measures from the wrong moment.
+  loadT0 = (window.performance && performance.now) ? performance.now() : Date.now();
   drewFrom = draw(0);
 
   // Anything that can move the picture has to be able to wake the loop.
@@ -1371,7 +1522,6 @@
     setTimeout(function () { measure(); kick(); }, 250);
   });
 
-  loadT0 = (window.performance && performance.now) ? performance.now() : Date.now();
   pump();
   kick();
 })();
