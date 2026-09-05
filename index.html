@@ -43,10 +43,11 @@
 
   /* The only thing that actually scrolls. 1400vh of journey — the strip
      of frames and the screen the last one is held for, untouched — then
-     450vh of descent down descent_strip.jpg, then 80vh holding its foot.
+     450vh of descent down descent_strip.jpg, 80vh holding its foot, and
+     165vh each for frames11 and frames12 below that.
      SPACER_VH in the script has to agree with this number: every boundary
      down there is measured in vh read back off this element. */
-  #spacer { height: 1930vh; width: 100%; pointer-events: none; }
+  #spacer { height: 2260vh; width: 100%; pointer-events: none; }
 
   /* The opening screen's ground: frame one of the strip, in the same
      cover fit the canvas gives it, so it is the picture the page shows
@@ -313,13 +314,14 @@
 <div id="bar"></div>
 <div id="hint">גלול</div>
 
-<!-- Drives the scroll. Three stretches of it, and the script measures
+<!-- Drives the scroll. Five stretches of it, and the script measures
      every boundary between them off this element's own height rather than
      off a fraction of the run: the first 1400vh are the strip of frames
      and the screen the last one is held for, exactly the page that was
-     here before; the next 450vh walk a window down descent_strip.jpg; the
-     last 80vh hold the foot of it, and that is where the fourth caption
-     sits. Intentionally left empty. -->
+     here before; the next 450vh walk a window down descent_strip.jpg;
+     80vh hold the foot of it, and that is where the fourth caption sits
+     and then goes; the last 330vh are frames11 and frames12, 165 each.
+     Intentionally left empty. -->
 <div id="spacer"></div>
 
 <script>
@@ -358,6 +360,48 @@
   }
   var TOTAL = urls.length;          // 409
   var CLIP1_COUNT = SEQ[0].count;   // 48 — where frames2 starts
+
+  /* ------------------------------------------------------------------
+     The tail: two folders that come after the descent, not on the strip.
+
+     They are a separate block on purpose. SEQ, PACE and the whole 1400vh
+     journey are one closed system — every boundary above is measured off
+     journeyEnd and both seam calibrations key off a frame index in it —
+     and appending 96 frames to SEQ would move every one of those. So the
+     tail runs its own sequence, its own pacing map and its own playhead,
+     and the journey above it does not know it exists.
+
+     Order down the page: the strip of 409, the descent, the screen the
+     descent's foot is held for, then frames11, then frames12.
+  ------------------------------------------------------------------ */
+  var TAIL = [
+    { dir: 'frames11', count: 48 },   // clip8
+    { dir: 'frames12', count: 48 }    // clip9
+  ];
+
+  var tailUrls = [];
+  for (var ts = 0; ts < TAIL.length; ts++) {
+    for (var tn = 1; tn <= TAIL[ts].count; tn++) {
+      var tnum = String(tn);
+      while (tnum.length < 3) { tnum = '0' + tnum; }
+      tailUrls.push(TAIL[ts].dir + '/' + tnum + '.jpg');
+    }
+  }
+  var TAIL_TOTAL = tailUrls.length;   // 96
+  var TAIL_SPLIT = TAIL[0].count;     // 48 — where frames12 starts
+
+  /* One index space for everything that is downloaded, so the loader and
+     the memory window can be written once rather than twice:
+
+       0 .. TOTAL-1                     the journey's frames
+       TOTAL                            the descent strip
+       TAIL_BASE .. TAIL_BASE+95        frames11 then frames12
+
+     images[] holds every slot but TOTAL, which lives in `strip` because
+     the descent draws a moving window out of one photograph rather than a
+     frame out of a folder. */
+  var TAIL_BASE  = TOTAL + 1;
+  var LAST_SLOT  = TAIL_BASE + TAIL_TOTAL - 1;
 
   // 0-based index of frames5 001, summed off SEQ rather than written down,
   // so the second seam cannot drift if a count above it ever changes.
@@ -596,17 +640,80 @@
      one of those percentages would quietly stretch, and the journey would
      no longer be the journey.
 
-     So the three stretches are written here as vh and measured off the
-     spacer's own height. The first 1400 are exactly the page that was
-     here before — same frames, same pacing map, same two calibrations,
-     same captions, same fades, to the pixel — and the 450 + 80 below them
-     are new scroll that costs the journey nothing.
+     So the stretches are written here as vh and measured off the spacer's
+     own height. The first 1400 are exactly the page that was here before —
+     same frames, same pacing map, same two calibrations, same captions,
+     same fades, to the pixel — and the 450 + 80 + 165 + 165 below them are
+     new scroll that costs the journey nothing.
   ------------------------------------------------------------------ */
-  var SPACER_VH   = 1930;   // has to match #spacer in the stylesheet
+  var SPACER_VH   = 2260;   // has to match #spacer in the stylesheet
   var JOURNEY_VH  = 1400;   // frames and their held screen: untouched
   var DESCENT_VH  = 450;    // yOff 0 -> STRIP_TRAVEL, linearly
   var HOLD_VH     = 80;     // yOff parked at STRIP_TRAVEL
   var HOLD_RAMP   = 1 / 3;  // of the hold, over which caption four comes up
+  var CAP4_FADE_VH = 20;    // of the hold's end, over which it goes again
+  var TAIL_VH     = 165;    // each of frames11 and frames12
+
+  /* ------------------------------------------------------------------
+     The tail's pacing.
+     Same machine as the strip above and for the same reason: a frame
+     index is not a constant amount of travel. Measured the way PACE was,
+     as the change between neighbouring frames on the 390x844 render, and
+     the two folders are not alike. frames11 drifts forward at close to a
+     constant rate — 1.97 to 5.57, a spread of 2.8x, and nothing in it
+     reaches the clamp. frames12 accelerates out through the door and
+     brakes on the terrace: 4.41 to 27.01, a spread of 6.1x, with three
+     frames at the slow end that a flat division would crawl through while
+     the middle raced.
+
+     Each folder is normalised inside its own 165vh rather than the two
+     being paced against each other. They are separate shots and the
+     brief gives them equal scroll; pacing them jointly would hand
+     frames12, whose mean change is 3.7x frames11's, most of the 330.
+  ------------------------------------------------------------------ */
+  var PACE_11 = [
+    3.86,3.86,1.97,2.9,2.03,3.18,2.2,3.26,2.23,3.3,3.7,2.52,3.55,2.6,
+    4.04,2.71,4.25,2.97,4.13,4.41,3.25,4.58,3.2,4.77,3.18,4.91,3.37,4.99,
+    3.4,5.07,5.14,3.44,5.05,3.64,5.14,3.53,5.13,3.64,5.46,5.46,3.75,5.37,
+    3.86,5.5,4,5.57,4,5.37
+  ];
+  var PACE_12 = [
+    6.01,6.01,4.41,6.23,4.98,6.72,5.17,7.84,5.91,8.92,10.9,8.35,12.02,
+    9.38,13.11,10.22,14.46,11.48,17.4,19.93,15.42,22.41,15.56,21.67,
+    13.43,17.28,14.15,21.34,16.39,24.37,26.7,19.89,27.01,19.58,24.74,
+    17.65,24.61,16.34,22.23,22.12,14.76,19.8,12.66,16.04,9.51,11.61,6.65,
+    7.32
+  ];
+
+  // Cumulative scroll fraction of the whole 330vh at the end of each tail
+  // frame's slice: frames11 fills the first half, frames12 the second.
+  var TAIL_CUM = (function () {
+    var out = [], half = [PACE_11, PACE_12], k, i, n, sum, mean, lo, hi, v, acc;
+    for (k = 0; k < 2; k++) {
+      n = half[k].length; sum = 0;
+      for (i = 0; i < n; i++) { sum += half[k][i]; }
+      mean = sum / n; lo = PACE_MIN * mean; hi = PACE_MAX * mean;
+      v = new Array(n);
+      for (i = 0; i < n; i++) {
+        v[i] = half[k][i] < lo ? lo : (half[k][i] > hi ? hi : half[k][i]);
+      }
+      acc = 0;
+      for (i = 0; i < n; i++) { acc += v[i]; }
+      sum = 0;
+      for (i = 0; i < n; i++) { sum += v[i]; out.push(0.5 * k + 0.5 * sum / acc); }
+    }
+    return out;
+  })();
+
+  // Which tail frame is showing at fraction t of the 330vh.
+  function tailFrameAt(t) {
+    var lo = 0, hi = TAIL_CUM.length - 1, mid;
+    while (lo < hi) {
+      mid = (lo + hi) >> 1;
+      if (TAIL_CUM[mid] < t) { lo = mid + 1; } else { hi = mid; }
+    }
+    return lo;
+  }
 
   /* ------------------------------------------------------------------ */
 
@@ -626,7 +733,7 @@
     CAPTIONS[cn].shown = -1;    // last opacity written, so we write once per change
   }
 
-  var images = new Array(TOTAL);
+  var images = new Array(LAST_SLOT + 1);
   var strip  = new Image();     // the descent, loaded with the frames
   var ready  = false;
   var cw = 0, ch = 0;
@@ -637,7 +744,8 @@
 
   var M = {
     vh: 1, maxScroll: 1, animEnd: 1,
-    journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1
+    journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1,
+    cap4Fade: 1, holdEnd: 1, tailEnd: 1
   };
 
   function measure() {
@@ -689,6 +797,17 @@
     M.descentStart = M.journeyEnd;
     M.descentEnd   = M.descentStart + DESCENT_VH * unit;
     M.holdRamp     = M.descentEnd + HOLD_VH * HOLD_RAMP * unit;
+    M.holdEnd      = M.descentEnd + HOLD_VH * unit;
+
+    // Caption four now has an end. It comes up over the first third of the
+    // hold as it always did, and goes again over the last CAP4_FADE_VH of
+    // it, so it is at zero exactly where the hold runs out — which is the
+    // first pixel of frames11. Nothing of it survives into the tail.
+    M.cap4Fade     = M.holdEnd - CAP4_FADE_VH * unit;
+
+    // The tail: two folders of 165vh each, picking up where the hold ends
+    // and running to the foot of the page.
+    M.tailEnd      = M.holdEnd + 2 * TAIL_VH * unit;
   }
 
   // Read the scroll offset from both sources; iOS reports through
@@ -783,7 +902,7 @@
      Bounded by TOTAL in the worst case, which is a few hundred property
      reads on a frame that would otherwise be blank.
   ------------------------------------------------------------------ */
-  function paintable(idx) {
+  function paintable(idx, lo, hi) {
     var im = images[idx], i;
     if (im && im.complete && im.naturalWidth) { return idx; }
 
@@ -791,11 +910,15 @@
     // sequential walk, and refill the window around it while we are at it.
     refill(idx);
 
-    for (i = idx - 1; i >= 0; i--) {
+    // Bounded to the block the frame belongs to. A tail frame must never
+    // fall back onto the end of the journey and a journey frame must never
+    // fall back onto the tail: those are different rooms, and standing in
+    // the wrong one is worse than standing still.
+    for (i = idx - 1; i >= lo; i--) {
       im = images[i];
       if (im && im.complete && im.naturalWidth) { return i; }
     }
-    for (i = idx + 1; i < TOTAL; i++) {
+    for (i = idx + 1; i <= hi; i++) {
       im = images[i];
       if (im && im.complete && im.naturalWidth) { return i; }
     }
@@ -809,17 +932,27 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
 
-    var idx = paintable(want);
+    // The two blocks are separate ranges of the same slot space, and each
+    // falls back only within itself.
+    var tail = want >= TAIL_BASE;
+    var idx  = tail ? paintable(want, TAIL_BASE, LAST_SLOT)
+                    : paintable(want, 0, TOTAL - 1);
     if (idx < 0) { return -1; }
     var img = images[idx];
 
     var fit = coverFit(img.naturalWidth, img.naturalHeight);
     var dx = fit.dx, dy = fit.dy, dw = fit.dw, dh = fit.dh;
 
-    // Two seams, and the ramps never overlap, so the first one wins.
-    var z  = zoomFor(idx);
+    // Two seams, both of them on the journey, and the ramps never overlap,
+    // so the first one wins. Neither reaches the tail: frames11 opens on
+    // the room the descent's foot is already standing in and frames12 on
+    // the frame frames11 closes with, so there is no cut to hide at
+    // either. Both measure inside 4 on the 32x57 metric the two seams
+    // above were calibrated against, where an invisible cut is about 1
+    // and a visible one is 20.
+    var z  = tail ? 1 : zoomFor(idx);
     var ax = ANCHOR_X, ay = ANCHOR_Y;
-    if (z === 1) {
+    if (z === 1 && !tail) {
       z  = zoomFor5(idx);
       ax = S5_ANCHOR_X; ay = S5_ANCHOR_Y;
     }
@@ -1052,13 +1185,20 @@
     }
 
     // The fourth caption is not a window on the strip of frames, so it is
-    // not in CAPTIONS and takes no share of the pacing map. It belongs to
-    // the held foot of the descent: up across the first third of that
-    // hold, on the same ease as every other ramp here, and then full to
-    // the bottom of the page. It never fades out — there is nothing after
-    // it to fade out for.
+    // not in CAPTIONS and takes no share of either pacing map. It belongs
+    // to the held foot of the descent: up across the first third of that
+    // hold, on the same ease as every other ramp here.
+    //
+    // It used to stay at full to the foot of the page, because the page
+    // ended under it. It does not any more — frames11 begins the moment
+    // the hold runs out — so it now goes again across the last
+    // CAP4_FADE_VH of the hold and is at zero exactly on that boundary.
+    // Two independent ramps rather than one window, because the way up is
+    // a third of 80vh and the way down is 20vh, and they are not
+    // symmetrical.
     if (cap4) {
-      var o4 = easeInOut(clamp((y - M.descentEnd) / (M.holdRamp - M.descentEnd), 0, 1));
+      var o4 = easeInOut(clamp((y - M.descentEnd) / (M.holdRamp - M.descentEnd), 0, 1))
+             * easeInOut(clamp((M.holdEnd - y) / (M.holdEnd - M.cap4Fade), 0, 1));
       if (o4 !== cap4Shown) {
         cap4Shown = o4;
         cap4.style.opacity = o4;
@@ -1107,7 +1247,7 @@
   ------------------------------------------------------------------ */
   var WARM_AHEAD = 12;
   var warmBusy = false;
-  var warmed = new Array(TOTAL + 1);   // the last slot is the descent strip
+  var warmed = new Array(LAST_SLOT + 1);   // one per slot, strip included
 
   /* ---- the sliding window --------------------------------------------
      Measured before this existed: the renderer sat at 254MB when the page
@@ -1137,10 +1277,10 @@
      its own rather than a slot in images[], so it is pinned by
      construction and this never touches it.
   ------------------------------------------------------------------ */
-  var KEEP_BACK  = 40;    // frames retained behind the playhead
+  var KEEP_BACK  = 40;    // slots retained behind the playhead
   var KEEP_AHEAD = 90;    // and ahead of it, where the travel is
-  var PIN_HEAD   = 16;    // frames 0..15, never dropped
-  var PIN_TAIL   = 8;     // and the last 8, whatever TOTAL becomes
+  var PIN_HEAD   = 16;    // slots 0..15, never dropped
+  var PIN_TAIL   = 8;     // and the last 8 of the whole run
 
   // Throttle: a sweep is worth running when a quarter second has gone by,
   // or when the playhead has moved far enough that the window has really
@@ -1149,8 +1289,13 @@
   var SWEEP_FRAMES = 10;
   var sweepT = -1e9, sweepIdx = -1e9;
 
+  /* The tail pin is the end of the run, not the end of the journey: with
+     frames11 and frames12 below it the last 8 slots are frames12/041-048,
+     and the old pin on frames10/050-057 would have held a stretch the
+     reader now passes straight through while leaving the actual last
+     screen — the one the page ends on — to be fetched again every time. */
   function pinnedFrame(i) {
-    return i < PIN_HEAD || i >= TOTAL - PIN_TAIL;
+    return i < PIN_HEAD || i > LAST_SLOT - PIN_TAIL;
   }
 
   function evict(idx, now) {
@@ -1161,7 +1306,8 @@
     sweepT = now; sweepIdx = idx;
 
     var lo = idx - KEEP_BACK, hi = idx + KEEP_AHEAD;
-    for (var i = 0; i < TOTAL; i++) {
+    for (var i = 0; i <= LAST_SLOT; i++) {
+      if (i === TOTAL) { continue; }        // the strip, pinned by construction
       if (i >= lo && i <= hi) { continue; }
       if (pinnedFrame(i)) { continue; }
       // A request already on the wire owns its Image; dropping the only
@@ -1187,12 +1333,12 @@
     if (warmBusy) { return true; }
     for (var k = 0; k <= WARM_AHEAD; k++) {
       var j = from + k;
-      // One step past the last frame is the descent strip: it is simply
-      // the next thing the playhead needs, so it rides the same window
-      // and is decoded coming down the tail of frames10 rather than on
-      // the tick the descent starts. It is one 810x4076 image, and it is
-      // the only thing the block ever draws.
-      if (j > TOTAL) { return false; }
+      // The walker runs over slots, so it crosses both handovers on its
+      // own: one step past the last frame of the journey is the descent
+      // strip, decoded coming down the tail of frames10 rather than on the
+      // tick the descent starts, and one step past that is frames11/001,
+      // decoded while the strip's foot is still being held.
+      if (j > LAST_SLOT) { return false; }
       if (warmed[j]) { continue; }
       var im = (j === TOTAL) ? strip : images[j];
       if (!im || !im.complete || !im.naturalWidth) { continue; }
@@ -1239,6 +1385,7 @@
 
   var targetP = 0, shownP = 0, running = false;
   var targetD = 0, shownD = 0;   // the same two positions, for the descent
+  var targetT = 0, shownT = 0;   // and again, for the tail below it
 
   function kick() {
     if (!running) { running = true; requestAnimationFrame(tick); }
@@ -1272,33 +1419,72 @@
     if (settledD) { shownD = targetD; }
     else { shownD += (targetD - shownD) * CHASE; }
 
+    // And a third, for the tail. Its target is its own fraction of the
+    // 330vh below the hold, read through TAIL_CUM rather than a flat
+    // division — see the pacing block up top for why frames12 in
+    // particular needs it — and it takes the same CHASE and SETTLE as the
+    // other two so the whole page has one weight under the thumb.
+    targetT = clamp((y - M.holdEnd) / (M.tailEnd - M.holdEnd), 0, 1);
+
+    var gapT = targetT - shownT;
+    if (gapT < 0) { gapT = -gapT; }
+    var settledT = gapT < SETTLE;
+    if (settledT) { shownT = targetT; }
+    else { shownT += (targetT - shownT) * CHASE; }
+
     var idx = frameAt(shownP);
+
+    /* Which of the three owns the canvas.
+
+       The strip owns it from the moment the scroll enters the descent
+       until its playhead has eased back to the top of the strip, which is
+       a beat after the scroll has left it — the mirror image of how it
+       takes the canvas on the way in, and over the held screen above it,
+       where the frames are parked on the last frame either way.
+
+       Unless the frames are moving. A flick violent enough to clear that
+       held screen inside the easing puts both playheads in motion at once,
+       and the picture belongs to the one the scroll is actually over: the
+       strip drops out on the spot rather than sitting over a journey that
+       has started running backwards underneath it. The tail takes the same
+       rule one storey down, against the strip.
+
+       Settled here rather than further down, because the memory window
+       below needs to know where the playhead really is before it decides
+       what to throw away. */
+    if (shownD > 0 && targetD === 0 && shownP < 1) { shownD = 0; settledD = true; }
+    if (shownT > 0 && targetT === 0 && shownD < 1) { shownT = 0; settledT = true; }
+
+    var onTail  = (targetT > 0 || shownT > 0);
+    var onStrip = !onTail && (targetD > 0 || shownD > 0);
+    var tailIdx = TAIL_BASE + tailFrameAt(shownT);
+
+    // One playhead in the slot space the loader and the window both work
+    // in, so neither has to know which block is on screen. Standing on the
+    // descent it is the strip's own slot, which sits between the two
+    // blocks — exactly where a window spanning the handover wants to be
+    // centred.
+    var slot = onTail ? tailIdx : (onStrip ? TOTAL : idx);
 
     // Drop what the window has left behind. Throttled inside — a quarter
     // second, or ten frames of travel, whichever comes first — so this is
     // a few hundred property reads a handful of times a second and not a
     // sweep on every paint.
-    evict(idx, (window.performance && performance.now) ? performance.now()
-                                                       : Date.now());
+    evict(slot, (window.performance && performance.now) ? performance.now()
+                                                        : Date.now());
 
     // Off the raw scroll, not off the eased playhead: shownP is a
     // function of how you got here, y is a function of where you are.
     overlay(y);
 
-    // The strip owns the canvas from the moment the scroll enters the
-    // descent until its playhead has eased back to the top of the strip,
-    // which is a beat after the scroll has left it — the mirror image of
-    // how it takes the canvas on the way in, and over the held screen
-    // above it, where the frames are parked on the last frame either way.
-    //
-    // Unless the frames are moving. A flick violent enough to clear that
-    // held screen inside the easing puts both playheads in motion at
-    // once, and the picture belongs to the one the scroll is actually
-    // over: the strip drops out on the spot rather than sitting over a
-    // journey that has started running backwards underneath it.
-    if (shownD > 0 && targetD === 0 && shownP < 1) { shownD = 0; settledD = true; }
-
-    if (targetD > 0 || shownD > 0) {
+    if (onTail) {
+      if (tailIdx !== lastIdx || drewFrom !== tailIdx || resized ||
+          cw !== lastW || ch !== lastH) {
+        drewFrom = draw(tailIdx);
+        stripUp = false;
+        lastIdx = tailIdx; lastYOff = -1; lastW = cw; lastH = ch;
+      }
+    } else if (onStrip) {
       var yOff = shownD * STRIP_TRAVEL;
       // stripUp is false while the strip is still on the wire, and the
       // reader can be down here before it lands now that the page unlocks
@@ -1307,7 +1493,7 @@
         stripUp = drawStrip(yOff);
         // Nothing to walk down yet: hold the last frame of the journey
         // rather than dropping to black under the reader.
-        if (!stripUp) { drewFrom = draw(TOTAL - 1); }
+        drewFrom = stripUp ? TOTAL : draw(TOTAL - 1);
         lastYOff = yOff; lastIdx = -1; lastW = cw; lastH = ch;
       }
     } else if (idx !== lastIdx || drewFrom !== idx || resized ||
@@ -1324,7 +1510,7 @@
 
     // Warmed from the shown frame: that is the playhead, and it is what the
     // next few frames of easing will walk through.
-    var warming = warm(idx);
+    var warming = warm(slot);
 
     // The hint answers "has the finger moved at all", so it reads the raw
     // scroll rather than the eased value — otherwise it would linger.
@@ -1333,7 +1519,7 @@
       hint.className = 'hide';
     }
 
-    if (!settled || !settledD || warming) { requestAnimationFrame(tick); }
+    if (!settled || !settledD || !settledT || warming) { requestAnimationFrame(tick); }
     else { running = false; }
   }
 
@@ -1379,6 +1565,12 @@
      rest takes to arrive — and everything after that comes down behind an
      unlocked page, in strip order, at most MAX_PARALLEL requests at a time.
 
+     GATE is 16 rather than a whole folder. 48 frames measured 10.3MB and
+     10.05s to unlock on a 8.6Mbps link, which is most of a minute's
+     patience spent before the reader may move at all; 16 is a third of
+     that, and it is still more than a second of travel up the facade —
+     further than anyone gets in the time the next sixteen take to land.
+
      In strip order because that is the order they are needed in, and the
      reader is walking down it at reading speed while the loader runs at
      wire speed. The window of six is what keeps it that way: browsers cap
@@ -1392,8 +1584,8 @@
      picture goes out.
   ------------------------------------------------------------------ */
 
-  var LOAD_TOTAL   = TOTAL + 1;   // the frames, and the descent strip
-  var GATE         = Math.min(48, TOTAL);   // held for the first folder
+  var LOAD_TOTAL   = LAST_SLOT + 1;   // journey, strip, then the tail
+  var GATE         = Math.min(16, TOTAL);   // the lock is held for these
   var MAX_PARALLEL = 6;
 
   var queueAt  = 0;    // next slot the sequential walk will request
@@ -1418,6 +1610,14 @@
   var urgent = [];
   var busy   = [];
   var URGENT_CAP = 24;
+
+  // The slot space in one function: the journey, then the strip, then the
+  // tail, in the order the reader meets them.
+  function slotUrl(i) {
+    if (i < TOTAL) { return urls[i]; }
+    if (i === TOTAL) { return STRIP_SRC; }
+    return tailUrls[i - TAIL_BASE];
+  }
 
   function want(i) {
     if (i < 0 || i >= LOAD_TOTAL) { return false; }
@@ -1481,7 +1681,7 @@
     img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
     img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
     inFlight++;
-    img.src = (i === TOTAL) ? STRIP_SRC : urls[i];
+    img.src = slotUrl(i);
   }
 
   function pump() {
