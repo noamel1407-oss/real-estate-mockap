@@ -43,11 +43,12 @@
 
   /* The only thing that actually scrolls. 1400vh of journey — the strip
      of frames and the screen the last one is held for, untouched — then
-     450vh of descent down descent_strip.jpg, 80vh holding its foot, and
-     165vh each for frames11 and frames12 below that.
+     450vh of descent down descent_strip.jpg, 80vh holding its foot,
+     165vh each for frames11 and frames12, then 90vh of the closing bit
+     and 80vh held on the terrace.
      SPACER_VH in the script has to agree with this number: every boundary
      down there is measured in vh read back off this element. */
-  #spacer { height: 2260vh; width: 100%; pointer-events: none; }
+  #spacer { height: 2430vh; width: 100%; pointer-events: none; }
 
   /* The opening screen's ground: frame one of the strip, in the same
      cover fit the canvas gives it, so it is the picture the page shows
@@ -320,8 +321,9 @@
      and the screen the last one is held for, exactly the page that was
      here before; the next 450vh walk a window down descent_strip.jpg;
      80vh hold the foot of it, and that is where the fourth caption sits
-     and then goes; the last 330vh are frames11 and frames12, 165 each.
-     Intentionally left empty. -->
+     and then goes; 330vh are frames11 and frames12, 165 each; and the
+     last 170vh are the closing bit, 90 of movement and 80 held on the
+     terrace. Intentionally left empty. -->
 <div id="spacer"></div>
 
 <script>
@@ -401,7 +403,50 @@
      the descent draws a moving window out of one photograph rather than a
      frame out of a folder. */
   var TAIL_BASE  = TOTAL + 1;
-  var LAST_SLOT  = TAIL_BASE + TAIL_TOTAL - 1;
+  var TAIL_LAST  = TAIL_BASE + TAIL_TOTAL - 1;
+
+  /* ------------------------------------------------------------------
+     The closing bit: two stills, no frames.
+
+     Where frames12 leaves off — a view out of the doorway onto the
+     terrace — the last stretch of the page is two layers on the canvas
+     that the scroll slides against each other. The far one is the terrace
+     itself; the near one is the door frame cut out of that same doorway
+     view, and it flies outward past the reader as the terrace comes up to
+     fill the screen.
+
+     They are slots like everything else so the loader queues them in
+     their place at the foot of the run, but they live in variables of
+     their own rather than in images[], which is what pins them: the sweep
+     only ever clears images[], so these two can never be dropped. That is
+     deliberate — they are the last thing on the page and the one thing a
+     reader is most likely to sit on.
+  ------------------------------------------------------------------ */
+  var TERR_SLOT  = TAIL_LAST + 1;
+  var JAMB_SLOT  = TERR_SLOT + 1;
+  var LAST_SLOT  = JAMB_SLOT;
+
+  var TERR_SRC   = 'terrace.jpeg';
+  var JAMB_SRC   = 'doorframe.png';
+  var TERR_W     = 941;      // both stills are 941 x 1672
+  var TERR_H     = 1672;
+
+  /* The registration between the two, measured rather than taken on
+     trust: the terrace as it appears through the doorway is terrace.jpeg
+     at 0.9597 with its origin 0.0238 of the width right and 0.0125 of the
+     height down. Fitting over the frame with the jamb masked out puts the
+     residual at 5.52 grey levels there against 7.37 for the 0.950 /
+     0.0320 / 0.0180 first proposed, and the fit is sharp enough that a
+     hundredth of the height either way doubles it.
+
+     The far layer runs from that to 1.000 with no offset, which is
+     terrace.jpeg drawn plain. The near layer runs from 1.000 to 1.350
+     about the centre of the frame, at full opacity throughout — it leaves
+     by moving, not by dissolving. */
+  var FAR_S0     = 0.9597;
+  var FAR_DX     = 0.0238;   // of the frame's width
+  var FAR_DY     = 0.0125;   // of the frame's height
+  var NEAR_Z1    = 1.350;
 
   // 0-based index of frames5 001, summed off SEQ rather than written down,
   // so the second seam cannot drift if a count above it ever changes.
@@ -643,16 +688,18 @@
      So the stretches are written here as vh and measured off the spacer's
      own height. The first 1400 are exactly the page that was here before —
      same frames, same pacing map, same two calibrations, same captions,
-     same fades, to the pixel — and the 450 + 80 + 165 + 165 below them are
-     new scroll that costs the journey nothing.
+     same fades, to the pixel — and the 450 + 80 + 165 + 165 + 90 + 80
+     below them are new scroll that costs the journey nothing.
   ------------------------------------------------------------------ */
-  var SPACER_VH   = 2260;   // has to match #spacer in the stylesheet
+  var SPACER_VH   = 2430;   // has to match #spacer in the stylesheet
   var JOURNEY_VH  = 1400;   // frames and their held screen: untouched
   var DESCENT_VH  = 450;    // yOff 0 -> STRIP_TRAVEL, linearly
   var HOLD_VH     = 80;     // yOff parked at STRIP_TRAVEL
   var HOLD_RAMP   = 1 / 3;  // of the hold, over which caption four comes up
   var CAP4_FADE_VH = 20;    // of the hold's end, over which it goes again
   var TAIL_VH     = 165;    // each of frames11 and frames12
+  var BIT_VH      = 90;     // the two layers sliding against each other
+  var END_HOLD_VH = 80;     // parked on the terrace; the foot of the page
 
   /* ------------------------------------------------------------------
      The tail's pacing.
@@ -735,6 +782,8 @@
 
   var images = new Array(LAST_SLOT + 1);
   var strip  = new Image();     // the descent, loaded with the frames
+  var terr   = new Image();     // the closing bit's far layer
+  var jamb   = new Image();     // and its near one, the door frame
   var ready  = false;
   var cw = 0, ch = 0;
 
@@ -745,7 +794,7 @@
   var M = {
     vh: 1, maxScroll: 1, animEnd: 1,
     journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1,
-    cap4Fade: 1, holdEnd: 1, tailEnd: 1
+    cap4Fade: 1, holdEnd: 1, tailEnd: 1, bitEnd: 1, endHold: 1
   };
 
   function measure() {
@@ -808,6 +857,14 @@
     // The tail: two folders of 165vh each, picking up where the hold ends
     // and running to the foot of the page.
     M.tailEnd      = M.holdEnd + 2 * TAIL_VH * unit;
+
+    // The closing bit. A dead uniform division of its 90vh, deliberately
+    // not a pacing map: the difference between neighbouring states here is
+    // a five per cent scale change, which a difference metric reads as
+    // almost nothing and would crush the whole move into one instant.
+    // Then 80vh parked on the terrace, and that is the foot of the page.
+    M.bitEnd       = M.tailEnd + BIT_VH * unit;
+    M.endHold      = M.bitEnd + END_HOLD_VH * unit;
   }
 
   // Read the scroll offset from both sources; iOS reports through
@@ -934,8 +991,8 @@
 
     // The two blocks are separate ranges of the same slot space, and each
     // falls back only within itself.
-    var tail = want >= TAIL_BASE;
-    var idx  = tail ? paintable(want, TAIL_BASE, LAST_SLOT)
+    var tail = want >= TAIL_BASE;   // TAIL_BASE..TAIL_LAST are the folders
+    var idx  = tail ? paintable(want, TAIL_BASE, TAIL_LAST)
                     : paintable(want, 0, TOTAL - 1);
     if (idx < 0) { return -1; }
     var img = images[idx];
@@ -984,6 +1041,45 @@
     var fit = coverFit(STRIP_W, STRIP_WIN);
     ctx.drawImage(strip, 0, yOff, STRIP_W, STRIP_WIN,
                          fit.dx, fit.dy, fit.dw, fit.dh);
+    return true;
+  }
+
+  /* The closing bit at fraction t of its 90vh.
+
+     Three draws. The first is the terrace laid over the whole frame
+     rectangle and it exists only as backing: the far layer is smaller than
+     the frame until t reaches 1, and the margin it leaves has to be
+     terrace rather than black. At t=0 that margin is entirely behind the
+     door frame anyway, and by the time the frame has flown off it has
+     shrunk to a sliver at the very edge.
+
+     Then the far layer at its own scale and offset, then the door frame
+     scaled about the centre of the frame rectangle. The near layer keeps
+     full opacity the whole way — it leaves the screen by moving, which is
+     what walking through a doorway looks like, and a cross-fade would only
+     make it evaporate on the spot.
+  ------------------------------------------------------------------ */
+  function drawBit(t) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
+
+    if (!terr.complete || !terr.naturalWidth) { return false; }
+
+    var fit = coverFit(TERR_W, TERR_H);
+    ctx.drawImage(terr, fit.dx, fit.dy, fit.dw, fit.dh);
+
+    var s = FAR_S0 + (1 - FAR_S0) * t;
+    ctx.drawImage(terr,
+                  fit.dx + FAR_DX * (1 - t) * fit.dw,
+                  fit.dy + FAR_DY * (1 - t) * fit.dh,
+                  fit.dw * s, fit.dh * s);
+
+    if (jamb.complete && jamb.naturalWidth) {
+      var z  = 1 + (NEAR_Z1 - 1) * t;
+      var cx = fit.dx + fit.dw / 2, cy = fit.dy + fit.dh / 2;
+      ctx.drawImage(jamb, cx - fit.dw * z / 2, cy - fit.dh * z / 2,
+                          fit.dw * z, fit.dh * z);
+    }
     return true;
   }
 
@@ -1289,11 +1385,12 @@
   var SWEEP_FRAMES = 10;
   var sweepT = -1e9, sweepIdx = -1e9;
 
-  /* The tail pin is the end of the run, not the end of the journey: with
-     frames11 and frames12 below it the last 8 slots are frames12/041-048,
-     and the old pin on frames10/050-057 would have held a stretch the
-     reader now passes straight through while leaving the actual last
-     screen — the one the page ends on — to be fetched again every time. */
+  /* The tail pin is the end of the run, wherever that has moved to. It has
+     been the end of frames10, then the end of frames12, and it is now the
+     closing bit: the last eight slots are frames12/043-048 and the bit's
+     two stills. The point of it is that the screen the page actually ends
+     on is never fetched twice, and every time the page has grown a new
+     ending that pin has had to move with it. */
   function pinnedFrame(i) {
     return i < PIN_HEAD || i > LAST_SLOT - PIN_TAIL;
   }
@@ -1307,7 +1404,9 @@
 
     var lo = idx - KEEP_BACK, hi = idx + KEEP_AHEAD;
     for (var i = 0; i <= LAST_SLOT; i++) {
-      if (i === TOTAL) { continue; }        // the strip, pinned by construction
+      // The strip and the closing bit's two stills are variables rather
+      // than entries here, which is exactly what pins them.
+      if (i === TOTAL || i === TERR_SLOT || i === JAMB_SLOT) { continue; }
       if (i >= lo && i <= hi) { continue; }
       if (pinnedFrame(i)) { continue; }
       // A request already on the wire owns its Image; dropping the only
@@ -1340,7 +1439,7 @@
       // decoded while the strip's foot is still being held.
       if (j > LAST_SLOT) { return false; }
       if (warmed[j]) { continue; }
-      var im = (j === TOTAL) ? strip : images[j];
+      var im = slotImage(j);
       if (!im || !im.complete || !im.naturalWidth) { continue; }
       warmed[j] = true;
       if (typeof im.decode !== 'function') { return false; }
@@ -1378,7 +1477,7 @@
   // loader had not reached it and paintable() had to fall back, and whether
   // the descent strip is the thing currently up. Both exist so a picture
   // drawn from an incomplete download is repainted when the bytes land.
-  var drewFrom = -1, stripUp = false;
+  var drewFrom = -1, stripUp = false, bitUp = false, lastBit = -1;
 
   var CHASE  = 0.135;   // fraction of the remaining gap closed per frame
   var SETTLE = 0.0001;  // gap below which the frame cannot change; snap and park
@@ -1386,6 +1485,7 @@
   var targetP = 0, shownP = 0, running = false;
   var targetD = 0, shownD = 0;   // the same two positions, for the descent
   var targetT = 0, shownT = 0;   // and again, for the tail below it
+  var targetB = 0, shownB = 0;   // and once more, for the closing bit
 
   function kick() {
     if (!running) { running = true; requestAnimationFrame(tick); }
@@ -1432,6 +1532,17 @@
     if (settledT) { shownT = targetT; }
     else { shownT += (targetT - shownT) * CHASE; }
 
+    // And a fourth, for the closing bit. A flat division of its 90vh —
+    // see measure() for why nothing else would do here — carried on the
+    // same CHASE and SETTLE as the other three.
+    targetB = clamp((y - M.tailEnd) / (M.bitEnd - M.tailEnd), 0, 1);
+
+    var gapB = targetB - shownB;
+    if (gapB < 0) { gapB = -gapB; }
+    var settledB = gapB < SETTLE;
+    if (settledB) { shownB = targetB; }
+    else { shownB += (targetB - shownB) * CHASE; }
+
     var idx = frameAt(shownP);
 
     /* Which of the three owns the canvas.
@@ -1454,9 +1565,11 @@
        what to throw away. */
     if (shownD > 0 && targetD === 0 && shownP < 1) { shownD = 0; settledD = true; }
     if (shownT > 0 && targetT === 0 && shownD < 1) { shownT = 0; settledT = true; }
+    if (shownB > 0 && targetB === 0 && shownT < 1) { shownB = 0; settledB = true; }
 
-    var onTail  = (targetT > 0 || shownT > 0);
-    var onStrip = !onTail && (targetD > 0 || shownD > 0);
+    var onBit   = (targetB > 0 || shownB > 0);
+    var onTail  = !onBit && (targetT > 0 || shownT > 0);
+    var onStrip = !onBit && !onTail && (targetD > 0 || shownD > 0);
     var tailIdx = TAIL_BASE + tailFrameAt(shownT);
 
     // One playhead in the slot space the loader and the window both work
@@ -1464,7 +1577,8 @@
     // descent it is the strip's own slot, which sits between the two
     // blocks — exactly where a window spanning the handover wants to be
     // centred.
-    var slot = onTail ? tailIdx : (onStrip ? TOTAL : idx);
+    var slot = onBit ? JAMB_SLOT
+                     : (onTail ? tailIdx : (onStrip ? TOTAL : idx));
 
     // Drop what the window has left behind. Throttled inside — a quarter
     // second, or ten frames of travel, whichever comes first — so this is
@@ -1477,11 +1591,23 @@
     // function of how you got here, y is a function of where you are.
     overlay(y);
 
-    if (onTail) {
+    if (onBit) {
+      // bitUp is false while either still is on the wire. Keyed on the
+      // eased position as well, because unlike a frame index this moves
+      // continuously and every value of it is a different picture.
+      if (shownB !== lastBit || resized || cw !== lastW || ch !== lastH || !bitUp) {
+        bitUp = drawBit(shownB);
+        // Neither still has arrived: hold the last frame of the tail
+        // rather than dropping to black under the reader.
+        drewFrom = bitUp ? JAMB_SLOT : draw(TAIL_LAST);
+        lastBit = shownB; lastIdx = -1; lastYOff = -1;
+        lastW = cw; lastH = ch;
+      }
+    } else if (onTail) {
       if (tailIdx !== lastIdx || drewFrom !== tailIdx || resized ||
           cw !== lastW || ch !== lastH) {
         drewFrom = draw(tailIdx);
-        stripUp = false;
+        stripUp = false; bitUp = false; lastBit = -1;
         lastIdx = tailIdx; lastYOff = -1; lastW = cw; lastH = ch;
       }
     } else if (onStrip) {
@@ -1494,6 +1620,7 @@
         // Nothing to walk down yet: hold the last frame of the journey
         // rather than dropping to black under the reader.
         drewFrom = stripUp ? TOTAL : draw(TOTAL - 1);
+        bitUp = false; lastBit = -1;
         lastYOff = yOff; lastIdx = -1; lastW = cw; lastH = ch;
       }
     } else if (idx !== lastIdx || drewFrom !== idx || resized ||
@@ -1504,7 +1631,7 @@
       // the real frame arrives instead of staying on the fallback.
       drewFrom = draw(idx);
       if (drewFrom >= 0) { retirePoster(); }
-      stripUp = false;
+      stripUp = false; bitUp = false; lastBit = -1;
       lastIdx = idx; lastYOff = -1; lastW = cw; lastH = ch;
     }
 
@@ -1519,7 +1646,7 @@
       hint.className = 'hide';
     }
 
-    if (!settled || !settledD || !settledT || warming) { requestAnimationFrame(tick); }
+    if (!settled || !settledD || !settledT || !settledB || warming) { requestAnimationFrame(tick); }
     else { running = false; }
   }
 
@@ -1584,7 +1711,7 @@
      picture goes out.
   ------------------------------------------------------------------ */
 
-  var LOAD_TOTAL   = LAST_SLOT + 1;   // journey, strip, then the tail
+  var LOAD_TOTAL   = LAST_SLOT + 1;   // journey, strip, tail, then the bit
   var GATE         = Math.min(16, TOTAL);   // the lock is held for these
   var MAX_PARALLEL = 6;
 
@@ -1614,15 +1741,28 @@
   // The slot space in one function: the journey, then the strip, then the
   // tail, in the order the reader meets them.
   function slotUrl(i) {
-    if (i < TOTAL) { return urls[i]; }
-    if (i === TOTAL) { return STRIP_SRC; }
+    if (i < TOTAL)      { return urls[i]; }
+    if (i === TOTAL)    { return STRIP_SRC; }
+    if (i === TERR_SLOT) { return TERR_SRC; }
+    if (i === JAMB_SLOT) { return JAMB_SRC; }
     return tailUrls[i - TAIL_BASE];
+  }
+
+  // The slots that are not entries in images[]: the descent strip and the
+  // closing bit's two stills. They hang off variables of their own, which
+  // is both how the sweep cannot reach them and how draw-time code gets at
+  // them without an index.
+  function slotImage(i) {
+    if (i === TOTAL)     { return strip; }
+    if (i === TERR_SLOT) { return terr; }
+    if (i === JAMB_SLOT) { return jamb; }
+    return images[i];
   }
 
   function want(i) {
     if (i < 0 || i >= LOAD_TOTAL) { return false; }
     if (busy[i]) { return false; }
-    var im = (i === TOTAL) ? strip : images[i];
+    var im = slotImage(i);
     if (im && im.complete && im.naturalWidth) { return false; }
     for (var k = 0; k < urgent.length; k++) {
       if (urgent[k] === i) { return false; }
@@ -1675,8 +1815,9 @@
     // One past the last frame is the descent strip: it is simply the next
     // thing the journey needs, so it queues in its own place rather than
     // competing with the frames above it.
-    var img = (i === TOTAL) ? strip : new Image();
-    if (i !== TOTAL) { images[i] = img; }
+    var img = slotImage(i) || new Image();
+    // Everything but the three slots that hang off variables of their own.
+    if (i !== TOTAL && i !== TERR_SLOT && i !== JAMB_SLOT) { images[i] = img; }
     img.decoding = 'async';
     img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
     img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
@@ -1693,7 +1834,7 @@
     }
     while (inFlight < MAX_PARALLEL && queueAt < LOAD_TOTAL) {
       var i = queueAt++;
-      var im = (i === TOTAL) ? strip : images[i];
+      var im = slotImage(i);
       // Already in hand, or already on the wire from the lane above.
       if (busy[i] || (im && im.complete && im.naturalWidth)) { continue; }
       request(i);
