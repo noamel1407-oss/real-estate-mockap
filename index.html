@@ -183,7 +183,13 @@
   }
 
   /* 1 — the facade, one line across the middle of the screen. Scaled off
-     the frame width so it holds that one line down to a 320px phone. */
+     the frame width so it holds that one line down to a 320px phone.
+
+     Every number here is 1.22x what it was: white 300-weight serif at
+     11.9px on a sunlit facade is a hairline, and measured over the line's
+     own rectangle it lifted the picture by only 12%. The floor and the
+     ceiling of the clamp move with the middle term, otherwise the two
+     ends of the range would quietly keep the old size. */
   .cap-1 {
     left: 0; right: 0;
     top: 50%;
@@ -191,11 +197,30 @@
     padding: 0 20px;
     text-align: center;
     color: #fff;
-    font-size: clamp(10px, calc(var(--capw) * .0305), 25px);
+    font-size: clamp(12.2px, calc(var(--capw) * .0372), 30.5px);
   }
   .cap-1 .en {
     white-space: nowrap;
-    text-shadow: 0 1px 18px rgba(0, 0, 0, .38);
+
+    /* The line has to come out the width it already is — it is one line
+       on a 320px phone with no room spare, and 22% more glyph has to be
+       paid for out of the tracking. Solved rather than eyeballed: the
+       string measures 17.64em of advances across 31 characters, so
+       holding F * (17.64 + 30 * ls) constant while F grows by 1.22 puts
+       ls at .0415em. Lands within 0.1% of today's width at every size. */
+    letter-spacing: .0415em;
+
+    /* Two layers, text-shadow only — no box behind it and no gradient.
+       A tight one to cut the glyph edge off the facade, and a wide soft
+       one for depth. Both black and mid-strength, so over the dark half
+       of the climb they are all but invisible and it is only where the
+       wall goes bright that they do any work.
+
+       They live on the type itself rather than on a layer of their own,
+       so the div's opacity carries them: the halo fades in and out with
+       the words instead of hanging on the picture after them. */
+    text-shadow: 0 0 2px rgba(0, 0, 0, .55),
+                 0 2px 18px rgba(0, 0, 0, .42);
   }
 
   /* 2 — the terrace, top right, over sky. */
@@ -408,9 +433,14 @@
     return 0;
   }
 
+  // How much longer caption one is held at full opacity than its stretch
+  // of the strip would give it. Applied to the opacity window only, well
+  // after the pacing map is closed — see the block above windowOpacity.
+  var CAP1_DWELL = 1.6;
+
   var CAPTIONS = [
     // Climbing the facade, balcony over balcony.
-    { id: 'cap1', from: gframe('frames2',   10), to: gframe('frames3',   8) },
+    { id: 'cap1', from: gframe('frames2',   10), to: gframe('frames3',   8), dwell: CAP1_DWELL },
     // Over the parapet onto the terrace, flame tree on the right.
     { id: 'cap2', from: gframe('frames3',   46), to: gframe('frames4',  26) },
     // The tail of the strip. `hold` carries the window past the last
@@ -883,15 +913,47 @@
 
   var RAMP = 0.25;   // of the window eased in, and the same again eased out
 
+  /* ------------------------------------------------------------------
+     Dwell.
+     A caption marked `dwell` is held at full opacity that many times
+     longer, and its two fades keep the duration they already have.
+
+     The only way to buy that time without taking any is to widen the
+     opacity window and shorten the ramp fraction by exactly as much.
+     Widening by grow = 1 + (dwell - 1) * (1 - 2 * RAMP) and setting the
+     fraction to RAMP / grow leaves each ramp at RAMP * span — the same
+     scroll distance, to the pixel — while the plateau goes from
+     (1 - 2 * RAMP) * span to dwell times that. At 1.6 the window grows
+     30%, the ramps do not move at all, and the plateau grows 60%.
+
+     Deliberately here and not in the pacing map above. `from` and `to`
+     still say which frames take CAPTION_BOOST, PACE_CUM is closed before
+     this runs, and it is untouched: no frame moves, TOTAL is what it was
+     and the spacer is the height it was. The window simply reaches
+     further either side of the stretch that paid for it, and the camera
+     goes on climbing under the text as it always did.
+  ------------------------------------------------------------------ */
+  for (var dq = 0; dq < CAPTIONS.length; dq++) {
+    var cd = CAPTIONS[dq];
+    cd.ramp = RAMP;
+    if (!cd.dwell) { continue; }
+    var dspan = cd.b - cd.a;
+    var dgrow = 1 + (cd.dwell - 1) * (1 - 2 * RAMP);
+    var dmid  = (cd.a + cd.b) / 2;
+    cd.a = dmid - dspan * dgrow / 2;
+    cd.b = dmid + dspan * dgrow / 2;
+    cd.ramp = RAMP / dgrow;
+  }
+
   function easeInOut(t) {
     return t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
   }
 
-  function windowOpacity(y, a, b) {
+  function windowOpacity(y, a, b, ramp) {
     if (y <= a || y >= b || b <= a) { return 0; }
     var t = (y - a) / (b - a);
-    if (t < RAMP)     { return easeInOut(t / RAMP); }
-    if (t > 1 - RAMP) { return easeInOut((1 - t) / RAMP); }
+    if (t < ramp)     { return easeInOut(t / ramp); }
+    if (t > 1 - ramp) { return easeInOut((1 - t) / ramp); }
     return 1;
   }
 
@@ -924,7 +986,7 @@
       // pixel of the strip.
       var a = cap.a * M.animEnd;
       var b = cap.hold ? M.journeyEnd : cap.b * M.animEnd;
-      var o = windowOpacity(y, a, b);
+      var o = windowOpacity(y, a, b, cap.ramp);
       if (o !== cap.shown) {
         cap.shown = o;
         cap.node.style.opacity = o;
