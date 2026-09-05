@@ -25,7 +25,8 @@
     color: #fff;
   }
 
-  /* Scroll is locked until every frame is in memory. */
+  /* Scroll is locked until every frame, and the descent strip, are in
+     memory. */
   html.is-loading, html.is-loading body { overflow: hidden; height: 100%; touch-action: none; }
 
   /* The single canvas. Everything is painted here with drawImage. */
@@ -40,8 +41,12 @@
     transform: translateZ(0);
   }
 
-  /* The only thing that actually scrolls. */
-  #spacer { height: 1400vh; width: 100%; pointer-events: none; }
+  /* The only thing that actually scrolls. 1400vh of journey — the strip
+     of frames and the screen the last one is held for, untouched — then
+     450vh of descent down descent_strip.jpg, then 80vh holding its foot.
+     SPACER_VH in the script has to agree with this number: every boundary
+     down there is measured in vh read back off this element. */
+  #spacer { height: 1930vh; width: 100%; pointer-events: none; }
 
   /* The opening screen's ground: frame one of the strip, in the same
      cover fit the canvas gives it, so it is the picture the page shows
@@ -221,6 +226,22 @@
   .cap-3 .he { margin-right: auto; margin-left: 0; }
   .cap-3 .en, .cap-3 .he { text-shadow: 0 1px 16px rgba(255, 255, 255, .55); }
 
+  /* 4 — the foot of the descent, bottom left. Everything cap-3 is, moved
+     to the other corner: same size, same left edge, same white glow, and
+     dark for the same reason — the strip ends on bright stone and open
+     water, and white would wash straight out of it. Warmer than cap-3's
+     near-black because what it sits on is warm. */
+  .cap-4 {
+    bottom: calc(8.5% + env(safe-area-inset-bottom, 0px));
+    left: calc(22px + env(safe-area-inset-left, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
+    text-align: left;
+    color: #4A3528;
+    font-size: clamp(25px, calc(var(--capw) * .078), 38px);
+  }
+  .cap-4 .he { margin-right: auto; margin-left: 0; }
+  .cap-4 .en, .cap-4 .he { text-shadow: 0 1px 16px rgba(255, 255, 255, .55); }
+
   @media (prefers-reduced-motion: reduce) {
     #bar { transition: none; }
   }
@@ -239,8 +260,10 @@
 <div class="grad grad-top"></div>
 <div class="grad grad-bottom"></div>
 
-<!-- Three captions, positioned over the canvas and driven by scroll
-     position alone. See the caption block in the script. -->
+<!-- Four captions, positioned over the canvas and driven by scroll
+     position alone. See the caption block in the script. The first three
+     are windows on the strip of frames; the fourth belongs to the held
+     foot of the descent, which is why it is not in CAPTIONS. -->
 <div id="caps">
   <div class="cap cap-1" id="cap1">
     <div class="en"><span>Life feels different from above</span></div>
@@ -255,14 +278,23 @@
     <div class="en"><span>One seamless</span><span>space</span></div>
     <p class="he">סלון, פינת אוכל ומרפסת מתחברים לחלל אחד פתוח ומואר — הכול נפתח אל הנוף.</p>
   </div>
+
+  <div class="cap cap-4" id="cap4">
+    <div class="en"><span>Life, in</span><span>Full view</span></div>
+    <p class="he">חלל המגורים כולו פונה החוצה — האור, הנוף והבריכה מלווים כל רגע בבית.</p>
+  </div>
 </div>
 
 <div id="bar"></div>
 <div id="hint">גלול</div>
 
-<!-- Drives the scroll. The final viewport-height of this spacer is the
-     reserved still-frame screen: the last frame holds there, and that is
-     where the site copy will go later. Intentionally left empty. -->
+<!-- Drives the scroll. Three stretches of it, and the script measures
+     every boundary between them off this element's own height rather than
+     off a fraction of the run: the first 1400vh are the strip of frames
+     and the screen the last one is held for, exactly the page that was
+     here before; the next 450vh walk a window down descent_strip.jpg; the
+     last 80vh hold the foot of it, and that is where the fourth caption
+     sits. Intentionally left empty. -->
 <div id="spacer"></div>
 
 <script>
@@ -498,6 +530,54 @@
     return 1 + (S5_ZOOM_MAX - 1) * t;
   }
 
+  /* ------------------------------------------------------------------
+     The descent.
+     One continuous 810x4076 photograph, not a sequence. The scroll moves
+     an 810x1437 window — the frames' own rectangle — down it, from the
+     top of the strip to the bottom, and that window is placed on the
+     canvas by exactly the arithmetic a frame gets, so nothing about the
+     fit changes underfoot at the handover.
+
+     The window's travel is the whole of it: 4076 - 1437 = 2639, and the
+     block gets a dead uniform division of its 450vh. Emphatically not the
+     pacing map. PACE is a measurement of the difference between
+     neighbouring images, and the concrete down this strip is smooth: a
+     difference metric reads a camera moving at a constant rate over it as
+     a camera standing still, and would crush the entire descent into the
+     one stretch that happens to carry an edge. There is nothing here for
+     it to measure and nothing for it to fix — the strip was rendered at a
+     constant rate, so a constant rate is what it wants.
+
+     The temporal easing below is a different thing and does apply: CHASE
+     and SETTLE run this block on their own playhead, so the descent has
+     the same weight under the thumb as the rest of the site.
+  ------------------------------------------------------------------ */
+  var STRIP_SRC    = 'descent_strip.jpg';
+  var STRIP_W      = 810;                     // the file is 810 x 4076
+  var STRIP_H      = 4076;
+  var STRIP_WIN    = 1437;                    // one frame's height, exactly
+  var STRIP_TRAVEL = STRIP_H - STRIP_WIN;     // 2639, top of strip to bottom
+
+  /* ------------------------------------------------------------------
+     Scroll geometry, in absolute distance rather than in fractions.
+     The spacer used to be 1400vh and every boundary on the page was read
+     out of it as a percentage — which is fine while there is only one
+     journey on the page, and wrong the moment 530vh are appended: every
+     one of those percentages would quietly stretch, and the journey would
+     no longer be the journey.
+
+     So the three stretches are written here as vh and measured off the
+     spacer's own height. The first 1400 are exactly the page that was
+     here before — same frames, same pacing map, same two calibrations,
+     same captions, same fades, to the pixel — and the 450 + 80 below them
+     are new scroll that costs the journey nothing.
+  ------------------------------------------------------------------ */
+  var SPACER_VH   = 1930;   // has to match #spacer in the stylesheet
+  var JOURNEY_VH  = 1400;   // frames and their held screen: untouched
+  var DESCENT_VH  = 450;    // yOff 0 -> STRIP_TRAVEL, linearly
+  var HOLD_VH     = 80;     // yOff parked at STRIP_TRAVEL
+  var HOLD_RAMP   = 1 / 3;  // of the hold, over which caption four comes up
+
   /* ------------------------------------------------------------------ */
 
   var canvas = document.getElementById('stage');
@@ -507,6 +587,8 @@
   var poster = document.getElementById('poster');
   var logo   = document.getElementById('logo');
   var caps   = document.getElementById('caps');
+  var cap4   = document.getElementById('cap4');
+  var spacer = document.getElementById('spacer');
   var root   = document.documentElement;
 
   for (var cn = 0; cn < CAPTIONS.length; cn++) {
@@ -515,6 +597,7 @@
   }
 
   var images = new Array(TOTAL);
+  var strip  = new Image();     // the descent, loaded with the frames
   var ready  = false;
   var cw = 0, ch = 0;
 
@@ -522,7 +605,10 @@
 
   /* ---- viewport / scroll metrics ---------------------------------- */
 
-  var M = { vh: 1, maxScroll: 1, animEnd: 1 };
+  var M = {
+    vh: 1, maxScroll: 1, animEnd: 1,
+    journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1
+  };
 
   function measure() {
     var body = document.body;
@@ -532,8 +618,47 @@
       body ? (body.scrollHeight || 0) : 0
     );
     M.maxScroll = Math.max(1, full - M.vh);
-    // Hold the last frame for one full screen at the end.
-    M.animEnd = Math.max(1, M.maxScroll - M.vh);
+
+    // One CSS vh in px, read back off the spacer rather than taken from
+    // innerHeight: on iOS those are two different numbers — the spacer is
+    // laid out against the large viewport while innerHeight follows the
+    // chrome as it collapses — and the boundaries below have to be in the
+    // unit the document was actually laid out in.
+    //
+    // Off getBoundingClientRect and not off scrollHeight, which is
+    // rounded to whole pixels: 1400/1930 of a rounded height is not the
+    // height 1400vh laid out to, and the fraction of a pixel between them
+    // is the whole difference between the journey ending exactly where it
+    // used to and ending a hair short of it.
+    var box  = spacer ? spacer.getBoundingClientRect().height : 0;
+    var unit = (box > 0 ? box : full) / SPACER_VH;
+
+    // Where the journey ended before the descent was appended: 1400vh of
+    // spacer, less the screen you are standing on. Everything above this
+    // line — frame pacing, both seams, the mark, the three captions — is
+    // measured against it and not against maxScroll, so the 530vh below
+    // add scroll without stretching a single thing.
+    //
+    // Rounded, because 1400vh is fourteen whole viewport heights and the
+    // number is therefore an integer, while everything it has been read
+    // through is not: layout quantises the spacer's box to 1/64px and
+    // scaling 1930vh of that back down to 1400 leaves a hundredth of a
+    // pixel of drift. A hundredth of a pixel is enough to put the last
+    // scroll position the page used to have on the wrong side of this
+    // line, and it is the one position where that shows.
+    M.journeyEnd = Math.max(1, Math.round(JOURNEY_VH * unit) - M.vh);
+    // Hold the last frame for one full screen at the end of it.
+    M.animEnd = Math.max(1, M.journeyEnd - M.vh);
+
+    // The descent picks up exactly where that hold runs out, and its own
+    // hold runs to the foot of the page: journeyEnd + (450 + 80) * unit is
+    // 1930vh - vh, which is maxScroll but for the rounding above. The last
+    // half pixel of the page is not a boundary anyone can be on the wrong
+    // side of — both the window offset and caption four are clamped, and
+    // both have been at their end value for most of a screen by then.
+    M.descentStart = M.journeyEnd;
+    M.descentEnd   = M.descentStart + DESCENT_VH * unit;
+    M.holdRamp     = M.descentEnd + HOLD_VH * HOLD_RAMP * unit;
   }
 
   // Read the scroll offset from both sources; iOS reports through
@@ -574,6 +699,25 @@
 
   /* ---- painting ---------------------------------------------------- */
 
+  /* Where a source rectangle of iw x ih lands on the canvas buffer.
+     Phone-shaped viewports are within a few percent of the footage's own
+     9:16, so cover fills the screen and costs almost nothing. A landscape
+     desktop is a different story — cover there would throw away most of
+     the frame and leave a band of balconies — so past MAX_CROP the whole
+     frame is fitted onto the black field instead.
+
+     One function rather than two copies because the descent window has to
+     land on exactly the rectangle a frame lands on. Sharing the arithmetic
+     makes that a property of the code instead of a coincidence that holds
+     until somebody edits one of them. */
+  function coverFit(iw, ih) {
+    var cover   = Math.max(cw / iw, ch / ih);
+    var contain = Math.min(cw / iw, ch / ih);
+    var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
+    var dw = iw * scale, dh = ih * scale;
+    return { dx: (cw - dw) / 2, dy: (ch - dh) / 2, dw: dw, dh: dh };
+  }
+
   function draw(idx) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
@@ -581,18 +725,8 @@
     var img = images[idx];
     if (!img || !img.complete || !img.naturalWidth) { return false; }
 
-    var iw = img.naturalWidth, ih = img.naturalHeight;
-
-    // Phone-shaped viewports are within a few percent of the footage's
-    // own 9:16, so cover fills the screen and costs almost nothing. A
-    // landscape desktop is a different story — cover there would throw
-    // away most of the frame and leave a band of balconies — so past
-    // MAX_CROP the whole frame is fitted onto the black field instead.
-    var cover   = Math.max(cw / iw, ch / ih);
-    var contain = Math.min(cw / iw, ch / ih);
-    var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
-    var dw = iw * scale, dh = ih * scale;
-    var dx = (cw - dw) / 2, dy = (ch - dh) / 2;
+    var fit = coverFit(img.naturalWidth, img.naturalHeight);
+    var dx = fit.dx, dy = fit.dy, dw = fit.dw, dh = fit.dh;
 
     // Two seams, and the ramps never overlap, so the first one wins.
     var z  = zoomFor(idx);
@@ -611,6 +745,24 @@
     }
 
     ctx.drawImage(img, dx, dy, dw, dh);
+    return true;
+  }
+
+  /* One window on the descent strip, yOff pixels down it. Same fit, same
+     dx/dy/dw/dh, no seam zoom — there is no cut here to hide, the strip
+     is one photograph. yOff is left fractional on purpose: it is a
+     sub-pixel pan over an image already being resampled, and rounding it
+     to whole source pixels would only put a stutter into the one part of
+     the page that moves at a constant rate. */
+  function drawStrip(yOff) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
+
+    if (!strip.complete || !strip.naturalWidth) { return false; }
+
+    var fit = coverFit(STRIP_W, STRIP_WIN);
+    ctx.drawImage(strip, 0, yOff, STRIP_W, STRIP_WIN,
+                         fit.dx, fit.dy, fit.dw, fit.dh);
     return true;
   }
 
@@ -744,10 +896,18 @@
   }
 
   // The mark holds at 1 where the page opens and is gone by the time the
-  // first 6% of the page has gone by. Read off y like everything else
+  // first 6% of the journey has gone by. Read off y like everything else
   // here, so scrolling back up brings it back along the identical curve.
-  var LOGO_FADE  = 0.06;   // of the whole scrollable run
+  //
+  // Of the journey, deliberately, and not of the whole scrollable run:
+  // the run is 530vh longer than it was and this fade must not know that.
+  // Read as a fraction of maxScroll it would stretch from 84vh to 116vh
+  // for free, and the mark would still be dissolving halfway up the
+  // facade. journeyEnd is the old maxScroll to the pixel, so 6% of it is
+  // the same 6% it always was.
+  var LOGO_FADE  = 0.06;   // of the journey, i.e. of the page as it was
   var logoShown  = -1;
+  var cap4Shown  = -1;
   var posterDown = false;
 
   function overlay(y) {
@@ -756,9 +916,14 @@
       cap = CAPTIONS[i];
       if (!cap.node) { continue; }
       // Fractions are of the animated run; `hold` reaches past its end,
-      // over the screen the last frame is held for.
+      // over the screen the last frame is held for — to journeyEnd, which
+      // is where that screen stops and where the page used to stop with
+      // it. Not to maxScroll: the descent begins at journeyEnd, and a
+      // caption about the living room hanging over it would ride 450vh of
+      // a shot it has nothing to do with. It is finished before the first
+      // pixel of the strip.
       var a = cap.a * M.animEnd;
-      var b = cap.hold ? M.maxScroll : cap.b * M.animEnd;
+      var b = cap.hold ? M.journeyEnd : cap.b * M.animEnd;
       var o = windowOpacity(y, a, b);
       if (o !== cap.shown) {
         cap.shown = o;
@@ -766,7 +931,21 @@
       }
     }
 
-    var lo = 1 - easeInOut(clamp(y / (LOGO_FADE * M.maxScroll), 0, 1));
+    // The fourth caption is not a window on the strip of frames, so it is
+    // not in CAPTIONS and takes no share of the pacing map. It belongs to
+    // the held foot of the descent: up across the first third of that
+    // hold, on the same ease as every other ramp here, and then full to
+    // the bottom of the page. It never fades out — there is nothing after
+    // it to fade out for.
+    if (cap4) {
+      var o4 = easeInOut(clamp((y - M.descentEnd) / (M.holdRamp - M.descentEnd), 0, 1));
+      if (o4 !== cap4Shown) {
+        cap4Shown = o4;
+        cap4.style.opacity = o4;
+      }
+    }
+
+    var lo = 1 - easeInOut(clamp(y / (LOGO_FADE * M.journeyEnd), 0, 1));
     if (lo !== logoShown) {
       logoShown = lo;
       logo.style.opacity = lo;
@@ -804,7 +983,7 @@
   ------------------------------------------------------------------ */
   var WARM_AHEAD = 12;
   var warmBusy = false;
-  var warmed = new Array(TOTAL);
+  var warmed = new Array(TOTAL + 1);   // the last slot is the descent strip
 
   // Returns whether the walker still has ground to cover. The loop reads
   // that to decide if it may idle: stopping mid-window would leave the next
@@ -814,9 +993,14 @@
     if (warmBusy) { return true; }
     for (var k = 0; k <= WARM_AHEAD; k++) {
       var j = from + k;
-      if (j >= TOTAL) { return false; }
+      // One step past the last frame is the descent strip: it is simply
+      // the next thing the playhead needs, so it rides the same window
+      // and is decoded coming down the tail of frames10 rather than on
+      // the tick the descent starts. It is one 810x4076 image, and it is
+      // the only thing the block ever draws.
+      if (j > TOTAL) { return false; }
       if (warmed[j]) { continue; }
-      var im = images[j];
+      var im = (j === TOTAL) ? strip : images[j];
       if (!im || !im.complete || !im.naturalWidth) { continue; }
       warmed[j] = true;
       if (typeof im.decode !== 'function') { return false; }
@@ -848,12 +1032,13 @@
      resize restarts it, so a still page costs nothing.
   ------------------------------------------------------------------------ */
 
-  var lastIdx = -1, lastW = -1, lastH = -1, hintHidden = false;
+  var lastIdx = -1, lastYOff = -1, lastW = -1, lastH = -1, hintHidden = false;
 
   var CHASE  = 0.135;   // fraction of the remaining gap closed per frame
   var SETTLE = 0.0001;  // gap below which the frame cannot change; snap and park
 
   var targetP = 0, shownP = 0, running = false;
+  var targetD = 0, shownD = 0;   // the same two positions, for the descent
 
   function kick() {
     if (!running) { running = true; requestAnimationFrame(tick); }
@@ -875,15 +1060,46 @@
     if (settled) { shownP = targetP; }
     else { shownP += (targetP - shownP) * CHASE; }
 
+    // The descent runs a second playhead on the identical easing. Its
+    // target is a flat division of the block — (y - start) / span, no
+    // pacing map anywhere near it — and CHASE and SETTLE then give it the
+    // same lag and the same weight under the thumb as the frames have.
+    targetD = clamp((y - M.descentStart) / (M.descentEnd - M.descentStart), 0, 1);
+
+    var gapD = targetD - shownD;
+    if (gapD < 0) { gapD = -gapD; }
+    var settledD = gapD < SETTLE;
+    if (settledD) { shownD = targetD; }
+    else { shownD += (targetD - shownD) * CHASE; }
+
     var idx = frameAt(shownP);
 
     // Off the raw scroll, not off the eased playhead: shownP is a
     // function of how you got here, y is a function of where you are.
     overlay(y);
 
-    if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
+    // The strip owns the canvas from the moment the scroll enters the
+    // descent until its playhead has eased back to the top of the strip,
+    // which is a beat after the scroll has left it — the mirror image of
+    // how it takes the canvas on the way in, and over the held screen
+    // above it, where the frames are parked on the last frame either way.
+    //
+    // Unless the frames are moving. A flick violent enough to clear that
+    // held screen inside the easing puts both playheads in motion at
+    // once, and the picture belongs to the one the scroll is actually
+    // over: the strip drops out on the spot rather than sitting over a
+    // journey that has started running backwards underneath it.
+    if (shownD > 0 && targetD === 0 && shownP < 1) { shownD = 0; settledD = true; }
+
+    if (targetD > 0 || shownD > 0) {
+      var yOff = shownD * STRIP_TRAVEL;
+      if (yOff !== lastYOff || resized || cw !== lastW || ch !== lastH) {
+        drawStrip(yOff);
+        lastYOff = yOff; lastIdx = -1; lastW = cw; lastH = ch;
+      }
+    } else if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
       if (draw(idx)) { retirePoster(); }
-      lastIdx = idx; lastW = cw; lastH = ch;
+      lastIdx = idx; lastYOff = -1; lastW = cw; lastH = ch;
     }
 
     // Warmed from the shown frame: that is the playhead, and it is what the
@@ -897,7 +1113,7 @@
       hint.className = 'hide';
     }
 
-    if (!settled || warming) { requestAnimationFrame(tick); }
+    if (!settled || !settledD || warming) { requestAnimationFrame(tick); }
     else { running = false; }
   }
 
@@ -925,17 +1141,23 @@
     kick();                // the loop may have parked while the page was locked
   }
 
-  /* ---- preload ------------------------------------------------------ */
+  /* ---- preload ------------------------------------------------------
+     The strip comes down with the frames and counts toward the unlock
+     like one of them: it is the last stretch of the same journey, and a
+     page that opens onto a scroll which runs out of picture at 1400vh is
+     not a loaded page. So the lock is held for 410 things, not 409.
+  ------------------------------------------------------------------ */
 
+  var LOAD_TOTAL = TOTAL + 1;   // the 409 frames, and the descent strip
   var loaded = 0;
   var stall = null;
 
   function progress() {
     loaded++;
-    bar.style.width = ((loaded / TOTAL) * 100).toFixed(2) + '%';
+    bar.style.width = ((loaded / LOAD_TOTAL) * 100).toFixed(2) + '%';
 
     if (stall) { clearTimeout(stall); }
-    if (loaded >= TOTAL) {
+    if (loaded >= LOAD_TOTAL) {
       unlock();
     } else {
       // Safety net: if nothing lands for 25s, stop holding the page hostage.
@@ -952,6 +1174,11 @@
       img.src = urls[i];
       images[i] = img;
     }
+
+    strip.decoding = 'async';
+    strip.onload = progress;
+    strip.onerror = progress;
+    strip.src = STRIP_SRC;
   }
 
   /* ---- boot ---------------------------------------------------------- */
