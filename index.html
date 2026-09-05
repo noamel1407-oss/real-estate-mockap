@@ -708,11 +708,28 @@
 
   /* ---- canvas sizing ---------------------------------------------- */
 
+  /* Every frame on the strip is drawn scaled — the sources are 960 or 810
+     wide and no phone is either — so the resampler is in the path on every
+     single paint, and it is left at the browser's default. `high` asks for
+     a multi-tap filter instead of the bilinear one, which is the difference
+     between a soft edge and a clean one on a 1.3x-1.8x upscale.
+
+     Set here and nowhere else because assigning canvas.width or
+     canvas.height resets the 2D context to its defaults: written once at
+     boot it would survive exactly until the first rotation. */
+  function smoothing() {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+  }
+
   function resize() {
     var vw = window.innerWidth  || root.clientWidth  || 1;
     var vh = window.innerHeight || root.clientHeight || 1;
-    // Cap DPR at 2: the source frames are 810px wide, so a 3x buffer
-    // costs fill rate on iPhone without adding any real detail.
+    // Cap DPR at 2 deliberately, and not because of memory. The frames are
+    // 960px wide against 1170 device pixels on a 390pt phone at DPR 3, so a
+    // 3x buffer would only stretch the same pixels further: 1.76x instead of
+    // 1.32x. There is no detail up there to go and fetch, and the cost is
+    // 2.25x the fill rate on every paint.
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     var w = Math.max(1, Math.round(vw * dpr));
     var h = Math.max(1, Math.round(vh * dpr));
@@ -722,6 +739,7 @@
       canvas.style.width  = vw + 'px';
       canvas.style.height = vh + 'px';
       cw = w; ch = h;
+      smoothing();          // the resize above just reset it
       return true;
     }
     return false;
@@ -748,12 +766,43 @@
     return { dx: (cw - dw) / 2, dy: (ch - dh) / 2, dw: dw, dh: dh };
   }
 
-  function draw(idx) {
+  /* ---- what is actually paintable right now --------------------------
+     The page no longer waits for all of the strip before it unlocks, so
+     the playhead can reach a frame whose bytes are still on the wire. The
+     answer is never a black screen: fall back to the nearest frame behind
+     it, which is the one the camera was last standing on, and only look
+     forward if there is nothing behind at all.
+
+     In practice the first branch answers, and the walk never runs: the
+     loader works in strip order, so everything behind the playhead has
+     already landed unless the reader has outrun the download. Bounded by
+     TOTAL in the worst case, which is a few hundred property reads on a
+     frame that would otherwise be blank.
+  ------------------------------------------------------------------ */
+  function paintable(idx) {
+    var im = images[idx], i;
+    if (im && im.complete && im.naturalWidth) { return idx; }
+    for (i = idx - 1; i >= 0; i--) {
+      im = images[i];
+      if (im && im.complete && im.naturalWidth) { return i; }
+    }
+    for (i = idx + 1; i < TOTAL; i++) {
+      im = images[i];
+      if (im && im.complete && im.naturalWidth) { return i; }
+    }
+    return -1;
+  }
+
+  /* Returns the index actually painted, or -1 if nothing could be. The
+     caller keeps that rather than the index it asked for, so a frame drawn
+     from a fallback is repainted once the real one lands. */
+  function draw(want) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
 
+    var idx = paintable(want);
+    if (idx < 0) { return -1; }
     var img = images[idx];
-    if (!img || !img.complete || !img.naturalWidth) { return false; }
 
     var fit = coverFit(img.naturalWidth, img.naturalHeight);
     var dx = fit.dx, dy = fit.dy, dw = fit.dw, dh = fit.dh;
@@ -775,7 +824,7 @@
     }
 
     ctx.drawImage(img, dx, dy, dw, dh);
-    return true;
+    return idx;
   }
 
   /* One window on the descent strip, yOff pixels down it. Same fit, same
@@ -1040,8 +1089,12 @@
      first trip down the page costs what every later trip costs.
 
      Deliberately a short rolling window rather than all 409 up front:
-     409 decoded 810x1437 frames is far more than iOS will hold at once,
-     so asking for them only thrashes the cache and risks the tab.
+     409 decoded frames at 960x1703 is far more than iOS will hold at
+     once, so asking for them only thrashes the cache and risks the tab.
+
+     A frame the loader has not reached yet is simply skipped — the window
+     warms whatever part of itself has landed and moves on — so this needs
+     nothing added for the staged download below.
   ------------------------------------------------------------------ */
   var WARM_AHEAD = 12;
   var warmBusy = false;
@@ -1095,6 +1148,12 @@
   ------------------------------------------------------------------------ */
 
   var lastIdx = -1, lastYOff = -1, lastW = -1, lastH = -1, hintHidden = false;
+
+  // The frame the canvas is actually showing, which is lastIdx unless the
+  // loader had not reached it and paintable() had to fall back, and whether
+  // the descent strip is the thing currently up. Both exist so a picture
+  // drawn from an incomplete download is repainted when the bytes land.
+  var drewFrom = -1, stripUp = false;
 
   var CHASE  = 0.135;   // fraction of the remaining gap closed per frame
   var SETTLE = 0.0001;  // gap below which the frame cannot change; snap and park
@@ -1155,12 +1214,25 @@
 
     if (targetD > 0 || shownD > 0) {
       var yOff = shownD * STRIP_TRAVEL;
-      if (yOff !== lastYOff || resized || cw !== lastW || ch !== lastH) {
-        drawStrip(yOff);
+      // stripUp is false while the strip is still on the wire, and the
+      // reader can be down here before it lands now that the page unlocks
+      // on 48 frames. Redraw on every tick until it does.
+      if (yOff !== lastYOff || resized || cw !== lastW || ch !== lastH || !stripUp) {
+        stripUp = drawStrip(yOff);
+        // Nothing to walk down yet: hold the last frame of the journey
+        // rather than dropping to black under the reader.
+        if (!stripUp) { drewFrom = draw(TOTAL - 1); }
         lastYOff = yOff; lastIdx = -1; lastW = cw; lastH = ch;
       }
-    } else if (idx !== lastIdx || resized || cw !== lastW || ch !== lastH) {
-      if (draw(idx)) { retirePoster(); }
+    } else if (idx !== lastIdx || drewFrom !== idx || resized ||
+               cw !== lastW || ch !== lastH) {
+      // drewFrom is the frame actually painted, which is idx unless the
+      // loader has not reached it. Keeping it, rather than the index that
+      // was asked for, is what makes the picture correct itself the moment
+      // the real frame arrives instead of staying on the fallback.
+      drewFrom = draw(idx);
+      if (drewFrom >= 0) { retirePoster(); }
+      stripUp = false;
       lastIdx = idx; lastYOff = -1; lastW = cw; lastH = ch;
     }
 
@@ -1192,6 +1264,7 @@
   function unlock() {
     if (ready) { return; }
     ready = true;
+    if (stall) { clearTimeout(stall); stall = null; }
     root.className = '';
     window.removeEventListener('touchmove', block, { passive: false });
     window.removeEventListener('wheel', block, { passive: false });
@@ -1200,47 +1273,84 @@
     measure();
     layout();              // the frames are in now, so their aspect is known
     lastIdx = -1;          // force one repaint at the new metrics
+    drewFrom = -1;
+    // Read off window.__unlockMs when measuring the wait; the loader keeps
+    // running behind this and the number would otherwise be unobservable.
+    window.__unlockMs = Math.round((window.performance && performance.now
+                                    ? performance.now() : Date.now()) - loadT0);
     kick();                // the loop may have parked while the page was locked
   }
 
-  /* ---- preload ------------------------------------------------------
-     The strip comes down with the frames and counts toward the unlock
-     like one of them: it is the last stretch of the same journey, and a
-     page that opens onto a scroll which runs out of picture at 1400vh is
-     not a loaded page. So the lock is held for 410 things, not 409.
+  /* ---- staged loading -----------------------------------------------
+     The page used to hold the scroll lock until all 409 frames and the
+     descent strip were in memory. At 31MB that was already a long wait on
+     a phone; it is not a defensible one at any weight, and it scales with
+     every clip added to the end of the journey — a reader is made to wait
+     for the terrace before they may look at the front door.
+
+     So the lock is held for the first GATE frames only — the opening climb
+     up the facade, which is as far as anyone can scroll in the time the
+     rest takes to arrive — and everything after that comes down behind an
+     unlocked page, in strip order, at most MAX_PARALLEL requests at a time.
+
+     In strip order because that is the order they are needed in, and the
+     reader is walking down it at reading speed while the loader runs at
+     wire speed. The window of six is what keeps it that way: browsers cap
+     per-origin connections around six anyway, and requesting all 410 at
+     once only puts the frame the playhead actually wants behind four
+     hundred others in the same queue.
+
+     Nothing here can produce a black screen. draw() falls back to the
+     nearest frame already in memory, so the worst case for a reader who
+     outruns the download is that the camera pauses rather than that the
+     picture goes out.
   ------------------------------------------------------------------ */
 
-  var LOAD_TOTAL = TOTAL + 1;   // the 409 frames, and the descent strip
-  var loaded = 0;
-  var stall = null;
+  var LOAD_TOTAL   = TOTAL + 1;   // the frames, and the descent strip
+  var GATE         = Math.min(48, TOTAL);   // held for the first folder
+  var MAX_PARALLEL = 6;
 
-  function progress() {
-    loaded++;
-    bar.style.width = ((loaded / LOAD_TOTAL) * 100).toFixed(2) + '%';
+  var queueAt  = 0;    // next slot to request
+  var inFlight = 0;
+  var gateDone = 0;    // of the first GATE, settled either way
+  var stall    = null;
+  var loadT0   = 0;    // for the unlock timing reported in the console
 
-    if (stall) { clearTimeout(stall); }
-    if (loaded >= LOAD_TOTAL) {
-      unlock();
-    } else {
-      // Safety net: if nothing lands for 25s, stop holding the page hostage.
-      stall = setTimeout(unlock, 25000);
+  function slotDone(i) {
+    inFlight--;
+
+    if (i < GATE) {
+      gateDone++;
+      bar.style.width = ((gateDone / GATE) * 100).toFixed(2) + '%';
+      if (stall) { clearTimeout(stall); stall = null; }
+      if (gateDone >= GATE) {
+        unlock();
+      } else {
+        // Safety net: if nothing lands for 25s, stop holding the page.
+        stall = setTimeout(unlock, 25000);
+      }
     }
+
+    // A frame that has just landed may be a better answer than the one
+    // paintable() had to settle for, and the loop may well be parked.
+    kick();
+    pump();
   }
 
-  function preload() {
-    for (var i = 0; i < TOTAL; i++) {
-      var img = new Image();
+  function pump() {
+    while (inFlight < MAX_PARALLEL && queueAt < LOAD_TOTAL) {
+      var i = queueAt++;
+      // One past the last frame is the descent strip: it is simply the next
+      // thing the journey needs, so it queues in its own place rather than
+      // competing with the frames above it.
+      var img = (i === TOTAL) ? strip : new Image();
+      if (i !== TOTAL) { images[i] = img; }
       img.decoding = 'async';
-      img.onload = progress;
-      img.onerror = progress;
-      img.src = urls[i];
-      images[i] = img;
+      img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
+      img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
+      inFlight++;
+      img.src = (i === TOTAL) ? STRIP_SRC : urls[i];
     }
-
-    strip.decoding = 'async';
-    strip.onload = progress;
-    strip.onerror = progress;
-    strip.src = STRIP_SRC;
   }
 
   /* ---- boot ---------------------------------------------------------- */
@@ -1251,7 +1361,8 @@
   lock();
   measure();
   resize();
-  draw(0);
+  smoothing();          // resize() only sets it when the size actually changes
+  drewFrom = draw(0);
 
   // Anything that can move the picture has to be able to wake the loop.
   window.addEventListener('scroll', kick, { passive: true });
@@ -1260,7 +1371,8 @@
     setTimeout(function () { measure(); kick(); }, 250);
   });
 
-  preload();
+  loadT0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  pump();
   kick();
 })();
 </script>
