@@ -184,36 +184,51 @@
     margin-top: 1.7em;   /* .45em deep, so ~.77 of the heading size */
   }
 
-  /* 1 — the facade. Two lines at the upper third, anchored left.
+  /* 1 — the facade, one line across the middle of the screen.
 
-     It used to be one line across the middle of the screen at .0415em of
-     tracking and 14.5px — a stretched, nearly untracked line where every
-     other caption on the page is two tracked lines against an edge. That
-     is what made it read as belonging to a different site: the family and
-     the weight were already shared, the tracking was 4.3x tighter and the
-     size 2.1x smaller, and it was the only caption sitting in the middle
-     of the frame rather than against one side of it.
+     Back to where it started, minus the thing that was actually wrong with
+     it. The tracking was .0415em against .18em everywhere else, and an
+     almost untracked line of caps next to two tracked ones is what made it
+     read as another site's type; breaking it and moving it turned out to
+     be the wrong answer to that, so the line and the position are as they
+     were and only the tracking has changed.
 
-     So it takes caption two's tracking exactly, breaks where the sense
-     breaks, and sits against the left edge at a third of the height — the
-     same logic as OPEN SKY LIVING against the right, and left rather than
-     right because across these 47 frames the right of the picture goes
-     from open sky to a neighbouring tower while the left stays the
-     building's own face.
+     Wide tracking costs width, and the size pays for it — but far less
+     than it first looked. The string is 17.64em of advances across 31
+     characters, so at .18em the line comes out 23.04 * F, and a 320px
+     phone with 22px either side has 276px to give it. .0365 of the frame
+     width puts the narrow case at 11.7px in 269 of those 276, and because
+     both the type and the column scale off --capw the fit holds at every
+     width rather than only the one it was solved for.
 
-     Smaller than caption two, because it has to be: LIFE FEELS DIFFERENT
-     at .18em is twenty characters where ONE SEAMLESS is twelve, and at
-     caption two's size the long line would not fit a 320px phone.
+     Which lands it at 14.2px on a 390px phone — within a quarter pixel of
+     the 14.5 it was before any of this, now at .18em instead of .0415em.
+     The size was never what had to give; the first pass at this measured
+     the block the line sits in rather than the line, read 350px of text
+     where there were 268, and shrank the type to 9.5px to buy room that
+     was already there.
   */
   .cap-1 {
-    top: 33%;
-    left: calc(22px + env(safe-area-inset-left, 0px));
-    right: calc(22px + env(safe-area-inset-right, 0px));
-    text-align: left;
+    left: 0; right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 22px;
+    text-align: center;
     color: #fff;
-    font-size: clamp(15px, calc(var(--capw) * .0505), 23px);
+    font-size: clamp(10px, calc(var(--capw) * .0365), 22px);
   }
   .cap-1 .en {
+    white-space: nowrap;
+    /* No letter-spacing of its own any more: .18em comes down from
+       .cap .en, which is the whole point. */
+
+    /* No pullback on the trailing letter-space here, deliberately.
+       Caption two negates it to line its caps up with the Hebrew's right
+       edge; on a centred line the same negative margin widens the box and
+       carries the whole line to the right instead. Left alone, the gap
+       puts the glyphs half of .18em left of true centre — one pixel at
+       this size, against two of visible asymmetry the other way. */
+
     /* Two layers, text-shadow only — no box behind it and no gradient.
        A tight one to cut the glyph edge off the facade, and a wide soft
        one for depth. Both black and mid-strength, so over the dark half
@@ -248,23 +263,44 @@
      and fully transparent by 70% of the box, so it has no edge anywhere
      for the eye to find. Nothing about the font, the size or the position
      moves. */
+  /* White 300-weight type on a bright sky is the one place on this page
+     where the picture and the words are the same value.
+
+     Two attempts at a wash behind the words are gone, and the second was
+     worse than the first: a radial gradient on a layer that overran the
+     caption's box still had to stop somewhere, and where it stopped read
+     as a cut line across the screen. Anything shaped like a rectangle ends
+     at an edge and that edge is always findable.
+
+     So this one has no edge to find, because it ends where the screen
+     does. It spans the full width, starts at the very top of the frame
+     and falls to nothing by 45% of the way down — three sides of it are
+     the sides of the picture and the fourth is a falloff long enough to
+     be invisible. The stops are eased rather than linear so the tail
+     flattens into zero instead of arriving at it with a corner.
+
+     Held to the minimum that returns legibility, and that number is not
+     the one it looks like: alpha composites multiplicatively, so .098 over
+     a sky reading 106 takes 8 off it, not 25. Starting at 25 of 255 and
+     measuring — which is what the brief asked for — lands the strength at
+     .240, which is a fifth off the ground where the caption actually sits
+     and nothing at all by 45% down. Nothing about the font, the size or
+     the position moves. */
   .cap-2::before {
     content: "";
-    position: absolute;
-    /* Reaching well past the caption's own box on every side. Painted on
-       the box itself the gradient was still at 18/255 where the box ended
-       on the right — which is precisely the hard edge that would have read
-       as a panel, and it lands right under the type because the caption is
-       set against that edge. Out here it has room to reach nothing before
-       anything can see it stop. */
-    top: -20%; right: -16%; bottom: -28%; left: -24%;
-    background: radial-gradient(58% 54% at 66% 30%,
-                rgba(0, 0, 0, .30) 0%,
-                rgba(0, 0, 0, .17) 42%,
-                rgba(0, 0, 0, 0) 100%);
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 45vh;
+    background: linear-gradient(to bottom,
+                rgba(0, 0, 0, .240) 0%,
+                rgba(0, 0, 0, .171) 25%,
+                rgba(0, 0, 0, .103) 50%,
+                rgba(0, 0, 0, .044) 75%,
+                rgba(0, 0, 0, 0)    100%);
     z-index: -1;
     pointer-events: none;
   }
+
   .cap-2 .en, .cap-2 .he {
     text-shadow: 0 0 2px rgba(0, 0, 0, .40),
                  0 1px 20px rgba(0, 0, 0, .50);
@@ -323,7 +359,7 @@
      foot of the descent, which is why it is not in CAPTIONS. -->
 <div id="caps">
   <div class="cap cap-1" id="cap1">
-    <div class="en"><span>Life feels different</span><span>from above</span></div>
+    <div class="en"><span>Life feels different from above</span></div>
   </div>
 
   <div class="cap cap-2" id="cap2">
