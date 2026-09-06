@@ -3105,8 +3105,28 @@
 
   /* The one way anything enters a slot. Closes whatever it displaces —
      an ImageBitmap has to be closed by hand and an <img> does not, and
-     either can be replacing either after a scale crossing. */
+     either can be replacing either after a scale crossing.
+
+     It is also the last word on the path, because a crossing cannot mark
+     what is not there yet. A request already on the wire when the scale
+     crosses was issued under the old path and lands under the new one, and
+     checkBitmapMode() has no hold on it: an empty slot has no bitmap to
+     mark, and a slot that did hold one has its mark cleared by this very
+     function a moment before slotDone() would have re-asked. Either way
+     have() then reports the slot full and nothing asks again — the window
+     replaces an ordinary frame within a screen, but the pinned head and
+     tail and the three sweep-exempt stills would keep a bitmap the page
+     now letterboxes for the rest of the session. So a bitmap arriving on
+     the wrong side of the line is dropped here and the same request walks
+     down the other path: the slot keeps its busy flag and its place in
+     inFlight, so nothing double-counts and nothing is left without a
+     picture that it had before. */
   function landSlot(i, im) {
+    if (im && im.close && !bitmapPathOk()) {
+      im.close();
+      requestAsImg(i);
+      return;
+    }
     var old = slotImage(i);
     if (old && old.close && old !== im) { old.close(); }
     slotStore(i, im);
