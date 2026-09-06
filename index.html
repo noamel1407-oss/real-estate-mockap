@@ -2269,10 +2269,26 @@
      its own rather than a slot in images[], so it is pinned by
      construction and this never touches it.
   ------------------------------------------------------------------ */
-  var KEEP_BACK  = 40;    // slots retained behind the playhead
-  var KEEP_AHEAD = 90;    // and ahead of it, where the travel is
-  var PIN_HEAD   = 16;    // slots 0..15, never dropped
-  var PIN_TAIL   = 8;     // and the last 8 of the whole run
+  /* Halved, because the slots stopped being discardable.
+
+     While a slot was an <img> the browser was free to throw its decoded
+     pixels away and quietly decode them again, so 154 slots cost far less
+     than 154 decoded frames. An ImageBitmap is pinned until close(), so
+     the slot count is now the memory bill, exactly: measured on a full
+     walk of the page at 390x844, peak renderer RSS came out
+
+        40/90/16/8   154 slots   1151 MB
+        20/45/8/4     77 slots    692 MB      <- here
+        12/24/8/4     48 slots    508 MB
+
+     against 665MB for the <img> build this replaces. 77 slots puts it back
+     where it was. Forty-five ahead is still 0.3s of travel at a three-
+     screen-a-second flick, and what is behind the window is no longer a
+     download either — the byte cache below keeps it. */
+  var KEEP_BACK  = 20;    // slots retained behind the playhead
+  var KEEP_AHEAD = 45;    // and ahead of it, where the travel is
+  var PIN_HEAD   = 8;     // slots 0..7, never dropped
+  var PIN_TAIL   = 4;     // and the last 4 of the whole run
 
   // Throttle: a sweep is worth running when a quarter second has gone by,
   // or when the playhead has moved far enough that the window has really
@@ -2753,6 +2769,100 @@
   ------------------------------------------------------------------ */
   var BITMAP_MIN_SCALE = 0.85;
 
+  /* ------------------------------------------------------------------
+     THE BYTE CACHE — layer two.
+
+     A decoded frame is 6.5MB and pinned until close(); the bytes it was
+     decoded from are about 170KB. The window drops and closes bitmaps as
+     it always did, and this keeps the bytes, so a frame the reader comes
+     back to is decoded again out of storage instead of fetched again off
+     the network.
+
+     It exists because moving to fetch() lost something an <img> had for
+     free. Chrome's in-memory image cache served a re-requested <img> with
+     no network request at all — measured, the <img> build re-asked for
+     about two hundred slots on a full walk and only nine of them reached
+     the network. fetch() has no such layer: every re-ask went out, and a
+     full walk went from 75.7MB to 87.4MB.
+
+     BYTE_STORE picks the backing:
+       'cache'   Cache Storage. On disk, outside the renderer's heap, and
+                 it survives a reload — a second visit decodes from disk
+                 and touches the network for nothing.
+       'memory'  ArrayBuffers under BYTE_CAP, FIFO. No disk, no
+                 persistence, and the bytes are charged to renderer RSS.
+       'off'     no second layer; every re-ask is a fetch.
+
+     CACHE_VERSION is not decoration. Cache Storage is a raw key/value
+     lookup with no revalidation, so bytes stored under a path are served
+     for that path until the name changes. IF A FRAME'S BYTES ARE EVER
+     REPLACED AT THE SAME PATH, THIS STRING HAS TO BE BUMPED, or readers
+     with a warm cache keep the old frame.
+  ------------------------------------------------------------------ */
+  var BYTE_STORE    = 'cache';
+  var CACHE_VERSION = 'alta-frames-v1';
+  var BYTE_CAP      = 64 * 1024 * 1024;   // 'memory' only
+
+  var cachePromise = null;
+  function frameCache() {
+    if (!cachePromise) {
+      cachePromise = (window.caches ? window.caches.open(CACHE_VERSION)
+                                    : Promise.reject())
+        .then(function (c) {
+          // Drop any older version of this cache, so a bumped name does
+          // not leave the previous one on the reader's disk for ever.
+          if (window.caches.keys) {
+            window.caches.keys().then(function (ks) {
+              for (var k = 0; k < ks.length; k++) {
+                if (ks[k] !== CACHE_VERSION && ks[k].indexOf('alta-frames-') === 0) {
+                  window.caches['delete'](ks[k]);
+                }
+              }
+            })['catch'](function () {});
+          }
+          return c;
+        })['catch'](function () { return null; });
+    }
+    return cachePromise;
+  }
+
+  var memBuf = {}, memKeys = [], memBytes = 0;
+
+  // -> Promise<Blob|null>. Null means "not held, go and fetch it".
+  function bytesGet(url) {
+    if (BYTE_STORE === 'memory') {
+      var buf = memBuf[url];
+      return Promise.resolve(buf ? new Blob([buf], { type: 'image/jpeg' }) : null);
+    }
+    if (BYTE_STORE === 'cache') {
+      return frameCache().then(function (c) {
+        if (!c) { return null; }
+        return c.match(url).then(function (r) { return r ? r.blob() : null; });
+      })['catch'](function () { return null; });
+    }
+    return Promise.resolve(null);
+  }
+
+  // Fire and forget: the decode must not wait on the write.
+  function bytesPut(url, res) {
+    if (BYTE_STORE === 'memory') {
+      res.clone().arrayBuffer().then(function (buf) {
+        if (memBuf[url]) { return; }
+        memBuf[url] = buf; memKeys.push(url); memBytes += buf.byteLength;
+        while (memBytes > BYTE_CAP && memKeys.length) {
+          var k = memKeys.shift();
+          if (memBuf[k]) { memBytes -= memBuf[k].byteLength; delete memBuf[k]; }
+        }
+      })['catch'](function () {});
+      return;
+    }
+    if (BYTE_STORE === 'cache') {
+      var copy = res.clone();
+      frameCache().then(function (c) { if (c) { return c.put(url, copy); } })
+        ['catch'](function () {});
+    }
+  }
+
   function bitmapPathOk() {
     if (!CAN_BITMAP) { return false; }
     // Both source sizes are the same 9:16 within a per cent, so one probe
@@ -2766,8 +2876,16 @@
     busy[i] = true;
     inFlight++;
     if (!bitmapPathOk()) { requestAsImg(i); return; }
-    fetch(slotUrl(i), { credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.blob() : Promise.reject(r.status); })
+    var url = slotUrl(i);
+    bytesGet(url)
+      .then(function (held) {
+        if (held) { return held; }
+        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+          if (!r.ok) { return Promise.reject(r.status); }
+          bytesPut(url, r);
+          return r.blob();
+        });
+      })
       .then(function (blob) { return createImageBitmap(blob); })
       .then(function (bmp) {
         var old = slotImage(i);
