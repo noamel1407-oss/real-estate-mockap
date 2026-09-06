@@ -2828,8 +2828,69 @@
 
   var memBuf = {}, memKeys = [], memBytes = 0;
 
-  // -> Promise<Blob|null>. Null means "not held, go and fetch it".
+  /* ------------------------------------------------------------------
+     The write queue, and why there is one.
+
+     Measured: reading from Cache Storage costs nothing. A build that only
+     reads, against a cache another load had already filled, peaks at
+     683MB — the same 682MB a build with no second layer at all peaks at,
+     while still pulling 0.58MB off the wire instead of 170MB. The whole
+     of the hundred megabytes the byte cache was costing is on the write
+     side.
+
+     Two things caused it. res.clone() makes the browser buffer the entire
+     body in memory so both branches can be read independently, so every
+     frame was held twice; and the put was fired and forgotten, so with the
+     loader running six at a time and the walk fetching five hundred slots,
+     the un-drained writes piled up — five hundred bodies at 170KB is
+     eighty-five megabytes, which is very close to what was measured.
+
+     Four things were tried against it, each measured on two full walks
+     down and back. Peak renderer RSS:
+
+        reads only, cache pre-filled, no writes at all       683 MB
+        queue two deep AND pinned slots skipped              879 MB   <- here
+        queue two deep, every slot still written             888 MB
+        no queue, every slot, as it stood before             884 MB
+        body read once as an ArrayBuffer instead of a Blob   887 MB
+
+     Read them against each other and the attribution is unambiguous. The
+     queue on its own bought nothing — 888 against 884 is noise. Taking the
+     clone away made it three megabytes worse, because an ArrayBuffer plus
+     a Blob built from it is a copy the browser's own Blob does not need.
+     The six megabytes that are real came from worthCaching() below, from
+     simply not writing the thirteen entries that can never be read back.
+
+     What costs the other two hundred is cache.put itself. Cache Storage
+     holds the written bodies in the renderer and nothing above the API
+     reaches that — which is why this stops here rather than being tuned
+     again.
+
+     The queue stays anyway. It buys nothing on this machine but it is the
+     right shape: without it the writes are unbounded fire-and-forget, and
+     that is a cliff on a slower disk rather than a cost on this one. A
+     write dropped for backlog is not a frame lost — the slot is fetched
+     again later in any walk of this page and cached then.
+  ------------------------------------------------------------------ */
+  var PUT_PARALLEL = 2, PUT_BACKLOG = 8;
+  var putQ = [], putBusy = 0;
+
+  function drainPut() {
+    while (putBusy < PUT_PARALLEL && putQ.length) {
+      var job = putQ.shift();
+      putBusy++;
+      frameCache().then(function (c) {
+        if (!c) { return null; }
+        return c.put(job.url, job.res);
+      })['catch'](function () {})
+        .then(function () { putBusy--; drainPut(); });
+    }
+  }
+
+  // -> Promise<Blob|null>. Null means "not held, go and fetch it", and a
+  // null url is a slot this layer is not asked to hold at all.
   function bytesGet(url) {
+    if (!url) { return Promise.resolve(null); }
     if (BYTE_STORE === 'memory') {
       var buf = memBuf[url];
       return Promise.resolve(buf ? new Blob([buf], { type: 'image/jpeg' }) : null);
@@ -2843,7 +2904,20 @@
     return Promise.resolve(null);
   }
 
-  // Fire and forget: the decode must not wait on the write.
+  /* Three slots are never worth a cache entry: the descent strip and the
+     closing bit's two stills hang off variables of their own and the sweep
+     cannot reach them, so they are fetched once and held for the life of
+     the page. The pinned head and tail are the same story by a different
+     route — pinnedFrame() keeps them, so they are never re-asked either.
+     None of them can ever read this layer back, and writing them is a
+     write for nothing. */
+  function worthCaching(i) {
+    if (i === TOTAL || i === TERR_SLOT || i === JAMB_SLOT) { return false; }
+    return !pinnedFrame(i);
+  }
+
+  // Fire and forget: the decode must not wait on the write. buf is an
+  // ArrayBuffer that the caller already has in hand — nothing is cloned.
   function bytesPut(url, res) {
     if (BYTE_STORE === 'memory') {
       res.clone().arrayBuffer().then(function (buf) {
@@ -2857,9 +2931,10 @@
       return;
     }
     if (BYTE_STORE === 'cache') {
-      var copy = res.clone();
-      frameCache().then(function (c) { if (c) { return c.put(url, copy); } })
-        ['catch'](function () {});
+      putQ.push({ url: url, res: res.clone() });
+      // Bounded, so the queue cannot become the thing that holds the memory.
+      while (putQ.length > PUT_BACKLOG) { putQ.shift(); }
+      drainPut();
     }
   }
 
@@ -2877,14 +2952,20 @@
     inFlight++;
     if (!bitmapPathOk()) { requestAsImg(i); return; }
     var url = slotUrl(i);
-    bytesGet(url)
+    var keep = worthCaching(i);
+    bytesGet(keep ? url : null)
       .then(function (held) {
         if (held) { return held; }
-        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
-          if (!r.ok) { return Promise.reject(r.status); }
-          bytesPut(url, r);
-          return r.blob();
-        });
+        return fetch(url, { credentials: 'same-origin' })
+          .then(function (r) {
+            if (!r.ok) { return Promise.reject(r.status); }
+            if (keep) { bytesPut(url, r); }
+            // A Blob, not an ArrayBuffer. Measured both: reading the body
+            // into a JS ArrayBuffer and building a Blob from it costs a
+            // copy and came out three megabytes worse, and the browser's
+            // own Blob is the thing createImageBitmap wants anyway.
+            return r.blob();
+          });
       })
       .then(function (blob) { return createImageBitmap(blob); })
       .then(function (bmp) {
