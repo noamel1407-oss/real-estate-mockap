@@ -1500,19 +1500,43 @@
     CAPTIONS[cn].shown = -1;    // last opacity written, so we write once per change
   }
 
+  /* ------------------------------------------------------------------
+     Every slot holds an ImageBitmap, not an <img>.
+
+     An <img> hands drawImage encoded bytes and a promise that the decode
+     will happen somewhere; in practice the raster of this canvas pulled
+     that decode onto the main thread, 192 of them and six seconds of it
+     on one walk down the page. createImageBitmap decodes on a worker off
+     a Blob and hands back something already in the shape the compositor
+     wants, so the only thing left on the main thread is the blit.
+
+     The trade is that a bitmap is not discardable: the browser may throw
+     an <img>'s decoded pixels away and quietly decode them again, which
+     is exactly what it was doing, but an ImageBitmap is pinned until
+     close(). So close() is not optional here — it is the whole memory
+     story, and it is what the sweep below now calls.
+  ------------------------------------------------------------------ */
   var images = new Array(LAST_SLOT + 1);
-  var strip  = new Image();     // the descent, loaded with the frames
-  var terr   = new Image();     // the closing bit's far layer
-  var jamb   = new Image();     // and its near one, the door frame
+  var strip  = null;            // the descent, decoded with the frames
+  var terr   = null;            // the closing bit's far layer
+  var jamb   = null;            // and its near one, the door frame
   var ready  = false;
+
+  /* Drawable? An ImageBitmap reports its size until close() takes it to
+     0x0. The <img> fallback below reports naturalWidth through .width the
+     moment it has decoded. One test covers both, and both are things
+     drawImage accepts. */
+  function have(im) { return !!im && im.width > 0; }
   var cw = 0, ch = 0;
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
   /* ---- viewport / scroll metrics ---------------------------------- */
 
+  var measured = false;
+
   var M = {
-    vh: 1, unit: 1, maxScroll: 1, animEnd: 1,
+    vh: 1, vw: 0, box: 0, glass: 1, unit: 1, maxScroll: 1, animEnd: 1,
     journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1,
     cap4Fade: 1, holdEnd: 1, tailEnd: 1, bitEnd: 1, endHold: 1,
     veilEnd: 1, introOut: 1
@@ -1520,12 +1544,18 @@
 
   function measure() {
     var body = document.body;
-    M.vh = window.innerHeight || root.clientHeight || 1;
+    var vw   = window.innerWidth  || root.clientWidth  || 1;
+    var ih   = window.innerHeight || root.clientHeight || 1;
     var full = Math.max(
       root.scrollHeight || 0,
       body ? (body.scrollHeight || 0) : 0
     );
-    M.maxScroll = Math.max(1, full - M.vh);
+
+    // The live glass, and the only two things that may read it: the clamp
+    // on the scroll position, and the loop's "has anything moved" test.
+    // No boundary below is measured against it any more — see M.glass.
+    M.vh = ih;
+    M.maxScroll = Math.max(1, full - ih);
 
     // One CSS vh in px, read back off the spacer rather than taken from
     // innerHeight: on iOS those are two different numbers — the spacer is
@@ -1541,6 +1571,37 @@
     var box  = spacer ? spacer.getBoundingClientRect().height : 0;
     var unit = (box > 0 ? box : full) / SPACER_VH;
 
+    /* Everything below this line is a function of the layout viewport and
+       of nothing else, so it is recomputed only when the layout viewport
+       has really changed: a different width, or a spacer that laid out to
+       a different height, which is what a rotation gives. A URL bar
+       sliding away changes innerHeight and changes neither of those, and
+       from here down it is not allowed to change anything at all. */
+    if (measured && vw === M.vw && box === M.box) { return; }
+    measured = true;
+    M.vw = vw;
+    M.box = box;
+
+    /* The screen the journey is measured against.
+
+       This used to be window.innerHeight, and that was the jumping screen.
+       On iOS the URL bar collapsing grows innerHeight by about 60px
+       without changing one thing about the layout — and journeyEnd moved
+       with it, animEnd by twice as much, so at scrollY 9000 the picture
+       walked fourteen frames sideways under a thumb that had not moved.
+
+       100 * unit is the same height read off the document instead. The
+       spacer is laid out in CSS vh, which on iOS is pinned to the LARGE
+       viewport and does not follow the chrome. With the bar showing at
+       load the two numbers agree to the pixel — which is why nothing
+       moves on a desktop, or on a phone whose chrome never collapses. */
+    // Rounded, for the same reason journeyEnd is: 100vh of a box quantised
+    // to a 64th of a pixel is 843.9995 where innerHeight was the integer
+    // 844, and half a thousandth of a pixel is still enough to move a
+    // caption's opacity in its sixth decimal. Rounded, the two are the
+    // same number and the journey is bit-identical to what shipped.
+    M.glass = Math.round(100 * unit);
+
     // Where the journey ended before the descent was appended: 1400vh of
     // spacer, less the screen you are standing on. Everything above this
     // line — frame pacing, both seams, the mark, the three captions — is
@@ -1554,9 +1615,9 @@
     // pixel of drift. A hundredth of a pixel is enough to put the last
     // scroll position the page used to have on the wrong side of this
     // line, and it is the one position where that shows.
-    M.journeyEnd = Math.max(1, Math.round(JOURNEY_VH * unit) - M.vh);
+    M.journeyEnd = Math.max(1, Math.round(JOURNEY_VH * unit) - M.glass);
     // Hold the last frame for one full screen at the end of it.
-    M.animEnd = Math.max(1, M.journeyEnd - M.vh);
+    M.animEnd = Math.max(1, M.journeyEnd - M.glass);
 
     // The descent picks up exactly where that hold runs out, and its own
     // hold runs to the foot of the page: journeyEnd + (450 + 80) * unit is
@@ -1692,7 +1753,7 @@
   ------------------------------------------------------------------ */
   function paintable(idx, lo, hi) {
     var im = images[idx], i;
-    if (im && im.complete && im.naturalWidth) { return idx; }
+    if (have(im)) { return idx; }
 
     // Wanted now and not here: to the front of the queue, ahead of the
     // sequential walk, and refill the window around it while we are at it.
@@ -1703,12 +1764,10 @@
     // fall back onto the tail: those are different rooms, and standing in
     // the wrong one is worse than standing still.
     for (i = idx - 1; i >= lo; i--) {
-      im = images[i];
-      if (im && im.complete && im.naturalWidth) { return i; }
+      if (have(images[i])) { return i; }
     }
     for (i = idx + 1; i <= hi; i++) {
-      im = images[i];
-      if (im && im.complete && im.naturalWidth) { return i; }
+      if (have(images[i])) { return i; }
     }
     return -1;
   }
@@ -1728,7 +1787,7 @@
     if (idx < 0) { return -1; }
     var img = images[idx];
 
-    var fit = coverFit(img.naturalWidth, img.naturalHeight);
+    var fit = coverFit(img.width, img.height);
     var dx = fit.dx, dy = fit.dy, dw = fit.dw, dh = fit.dh;
 
     // Two seams, both of them on the journey, and the ramps never overlap,
@@ -1767,7 +1826,7 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
 
-    if (!strip.complete || !strip.naturalWidth) { return false; }
+    if (!have(strip)) { return false; }
 
     var fit = coverFit(STRIP_W, STRIP_WIN);
     ctx.drawImage(strip, 0, yOff, STRIP_W, STRIP_WIN,
@@ -1794,7 +1853,7 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
 
-    if (!terr.complete || !terr.naturalWidth) { return false; }
+    if (!have(terr)) { return false; }
 
     var fit = coverFit(TERR_W, TERR_H);
     ctx.drawImage(terr, fit.dx, fit.dy, fit.dw, fit.dh);
@@ -1805,7 +1864,7 @@
                   fit.dy + FAR_DY * (1 - t) * fit.dh,
                   fit.dw * s, fit.dh * s);
 
-    if (jamb.complete && jamb.naturalWidth) {
+    if (have(jamb)) {
       var z  = 1 + (NEAR_Z1 - 1) * t;
       var cx = fit.dx + fit.dw / 2, cy = fit.dy + fit.dh / 2;
       ctx.drawImage(jamb, cx - fit.dw * z / 2, cy - fit.dh * z / 2,
@@ -1827,10 +1886,13 @@
     // Either source is frame one. The poster is in the markup, so it is
     // requested during parse and usually decodes first; the logo can be
     // placed on the loading screen that much sooner.
+    // The poster is still an <img> in the markup — it is what the page
+    // shows for the whole load — so it is asked in its own terms; slot 0
+    // is a bitmap and answers to have().
     var img = (poster.complete && poster.naturalWidth) ? poster : images[0];
-    if (!img || !img.complete || !img.naturalWidth) { return null; }
+    if (!(img === poster ? poster.naturalWidth : have(img))) { return null; }
 
-    var iw = img.naturalWidth, ih = img.naturalHeight;
+    var iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
     var cover   = Math.max(vw / iw, vh / ih);
     var contain = Math.min(vw / iw, vh / ih);
     var scale   = (cover / contain <= MAX_CROP) ? cover : contain;
@@ -2164,24 +2226,20 @@
     poster.style.display = 'none';
   }
 
-  /* ---- decode warm-up ------------------------------------------------
-     Rasterising a warm frame measures ~0ms; the only real cost in the
-     loop is the synchronous JPEG decode drawImage is forced into the
-     first time it touches a frame. So walk decode() along just ahead of
-     the playhead while the main thread is idle, one at a time, and the
-     first trip down the page costs what every later trip costs.
+  /* ---- decode warm-up: removed ---------------------------------------
+     There used to be a walker here that ran HTMLImageElement.decode()
+     twelve slots ahead of the playhead, because drawImage was otherwise
+     forced into a synchronous decode the first time it touched a frame.
 
-     Deliberately a short rolling window rather than all 409 up front:
-     409 decoded frames at 960x1703 is far more than iOS will hold at
-     once, so asking for them only thrashes the cache and risks the tab.
-
-     A frame the loader has not reached yet is simply skipped — the window
-     warms whatever part of itself has landed and moves on — so this needs
-     nothing added for the staged download below.
+     It is gone because the thing it was working around is gone. A slot is
+     an ImageBitmap now and a bitmap is decoded before it is ever stored —
+     there is no first touch left to be slow, and nothing to warm. Measured
+     both ways before removing it: with the walker still in place it added
+     202 off-thread decodes and moved the frame rate by about five per
+     cent, while the main-thread decode it was supposed to prevent carried
+     on regardless. The decode moved off the main thread when the slot
+     stopped being an <img>, not when the walker ran.
   ------------------------------------------------------------------ */
-  var WARM_AHEAD = 12;
-  var warmBusy = false;
-  var warmed = new Array(LAST_SLOT + 1);   // one per slot, strip included
 
   /* ---- the sliding window --------------------------------------------
      Measured before this existed: the renderer sat at 254MB when the page
@@ -2247,12 +2305,15 @@
       if (i === TOTAL || i === TERR_SLOT || i === JAMB_SLOT) { continue; }
       if (i >= lo && i <= hi) { continue; }
       if (pinnedFrame(i)) { continue; }
-      // A request already on the wire owns its Image; dropping the only
+      // A request already on the wire owns its slot; dropping the only
       // reference to it mid-flight buys nothing and loses the download.
       if (busy[i]) { continue; }
       if (!images[i]) { continue; }
+      // close() is what actually frees a bitmap. Dropping the reference
+      // alone would leave the decoded pixels to the garbage collector,
+      // which on a phone arrives long after the memory was needed.
+      if (images[i].close) { images[i].close(); }
       images[i] = null;
-      warmed[i] = false;    // it will need decoding again if it comes back
     }
 
     // And top the window back up. paintable() also calls this, but only
@@ -2260,32 +2321,6 @@
     // it here as well means the frames ahead are being fetched before the
     // playhead reaches them rather than a frame after.
     refill(idx);
-  }
-
-  // Returns whether the walker still has ground to cover. The loop reads
-  // that to decide if it may idle: stopping mid-window would leave the next
-  // few frames undecoded and hand the cost straight back to the next flick.
-  function warm(from) {
-    if (!ready) { return false; }
-    if (warmBusy) { return true; }
-    for (var k = 0; k <= WARM_AHEAD; k++) {
-      var j = from + k;
-      // The walker runs over slots, so it crosses both handovers on its
-      // own: one step past the last frame of the journey is the descent
-      // strip, decoded coming down the tail of frames10 rather than on the
-      // tick the descent starts, and one step past that is frames11/001,
-      // decoded while the strip's foot is still being held.
-      if (j > LAST_SLOT) { return false; }
-      if (warmed[j]) { continue; }
-      var im = slotImage(j);
-      if (!im || !im.complete || !im.naturalWidth) { continue; }
-      warmed[j] = true;
-      if (typeof im.decode !== 'function') { return false; }
-      warmBusy = true;
-      im.decode()['catch'](function () {}).then(function () { warmBusy = false; });
-      return true;
-    }
-    return false;
   }
 
   /* ---- render loop ----------------------------------------------------
@@ -2330,7 +2365,9 @@
   }
 
   function tick() {
-    // innerHeight shifts as Safari's chrome collapses; re-measure then.
+    // innerHeight shifts as Safari's chrome collapses. measure() still
+    // wants to know — maxScroll is measured against the live glass — but
+    // it now early-outs of everything else, so the boundaries hold.
     if (window.innerHeight !== M.vh) { measure(); }
 
     var resized = resize();
@@ -2484,10 +2521,6 @@
       lastIdx = idx; lastYOff = -1; lastW = cw; lastH = ch;
     }
 
-    // Warmed from the shown frame: that is the playhead, and it is what the
-    // next few frames of easing will walk through.
-    var warming = warm(slot);
-
     // The hint answers "has the finger moved at all", so it reads the raw
     // scroll rather than the eased value — otherwise it would linger.
     if (ready && !hintHidden && y > 6) {
@@ -2495,7 +2528,7 @@
       hint.className = 'hide';
     }
 
-    if (!settled || !settledD || !settledT || !settledB || warming) { requestAnimationFrame(tick); }
+    if (!settled || !settledD || !settledT || !settledB) { requestAnimationFrame(tick); }
     else { running = false; }
   }
 
@@ -2561,7 +2594,22 @@
   ------------------------------------------------------------------ */
 
   var LOAD_TOTAL   = LAST_SLOT + 1;   // journey, strip, tail, then the bit
-  var GATE         = Math.min(16, TOTAL);   // the lock is held for these
+  /* GATE was 16, which is three round trips of MAX_PARALLEL and 4.8s on a
+     throttled phone before the reader may move at all. Six is one batch:
+     the six requests go out together and land together, so 4 and 6 unlock
+     at the same moment and 6 puts two more frames in hand for it. Measured
+     at 8.6Mbps / 150ms / CPU 4x on a 390x844 phone, cache cold:
+
+        GATE  4   2144ms   15 requests   1.86MB
+        GATE  6   2167ms   17 requests   1.86MB     <- here
+        GATE  8   3319ms   19 requests   2.30MB
+        GATE 16   4796ms   27 requests   4.40MB
+
+     The first seconds after the unlock are loader-bound at that bandwidth
+     whatever this number is — the camera shows what has landed — so the
+     only thing the gate really decides is how long the reader is made to
+     look at a progress bar first. */
+  var GATE         = Math.min(6, TOTAL);    // the lock is held for these
   var MAX_PARALLEL = 6;
 
   var queueAt  = 0;    // next slot the sequential walk will request
@@ -2608,11 +2656,18 @@
     return images[i];
   }
 
+  // And the one place that writes them.
+  function slotStore(i, im) {
+    if (i === TOTAL)          { strip = im; }
+    else if (i === TERR_SLOT) { terr  = im; }
+    else if (i === JAMB_SLOT) { jamb  = im; }
+    else                      { images[i] = im; }
+  }
+
   function want(i) {
     if (i < 0 || i >= LOAD_TOTAL) { return false; }
     if (busy[i]) { return false; }
-    var im = slotImage(i);
-    if (im && im.complete && im.naturalWidth) { return false; }
+    if (have(slotImage(i))) { return false; }
     for (var k = 0; k < urgent.length; k++) {
       if (urgent[k] === i) { return false; }
     }
@@ -2658,19 +2713,81 @@
     pump();
   }
 
+  /* Fetch the bytes, decode them off the main thread, store the bitmap.
+
+     fetch goes through the HTTP cache exactly as an <img> did, which is
+     what keeps the note above true: the sequential walk fills the disk
+     cache, and a frame the sweep dropped comes back off the disk rather
+     than off the wire.
+
+     A slot that has already been filled and is being asked for again —
+     the sweep dropped it and the reader came back — must not leak the old
+     bitmap, so anything standing in the slot is closed before the new one
+     lands. In practice the sweep has already closed it; this is the case
+     where it had not got to it yet.
+
+     Bitmaps arriving for a slot the window has since moved past are still
+     stored rather than thrown away: the next sweep is at most a quarter
+     second off and will close them, and dropping them here would mean
+     re-fetching a frame a reader who reverses is about to want. */
+  var CAN_BITMAP = (typeof createImageBitmap === 'function' &&
+                    typeof fetch === 'function' && typeof Promise === 'function');
+
+  /* ------------------------------------------------------------------
+     And the bitmap path is taken only where it costs no sharpness.
+
+     Measured, eight frames each way. At 507x900 out of 960x1703 — what a
+     1440-wide desktop letterboxes a frame down to — an ImageBitmap drawn
+     by drawImage keeps 85.1% of the high-frequency energy the same frame
+     keeps through an <img>: 82% at worst, below 100% on every single frame
+     sampled, and resizeWidth with resizeQuality 'high' changes the number
+     by nothing at all. Chrome gives an <img> a mipmapped minification path
+     that it does not give a bitmap, and a 0.53 downscale is where that
+     shows. At 952x1688 — a phone under cover, a 0.99 scale — the same
+     comparison reads 101.1%.
+
+     So: off the main thread where the picture is drawn at about its own
+     size, which is every phone, and the old path where the frame is being
+     minified hard, which is a desktop and a phone held sideways. Sharpness
+     is the red line and this is the line that keeps it.
+  ------------------------------------------------------------------ */
+  var BITMAP_MIN_SCALE = 0.85;
+
+  function bitmapPathOk() {
+    if (!CAN_BITMAP) { return false; }
+    // Both source sizes are the same 9:16 within a per cent, so one probe
+    // answers for all of them.
+    var f = coverFit(960, 1703);
+    return (f.dw / 960) >= BITMAP_MIN_SCALE;
+  }
+
   function request(i) {
     if (busy[i]) { return; }
     busy[i] = true;
-    // One past the last frame is the descent strip: it is simply the next
-    // thing the journey needs, so it queues in its own place rather than
-    // competing with the frames above it.
-    var img = slotImage(i) || new Image();
-    // Everything but the three slots that hang off variables of their own.
-    if (i !== TOTAL && i !== TERR_SLOT && i !== JAMB_SLOT) { images[i] = img; }
-    img.decoding = 'async';
-    img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
-    img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
     inFlight++;
+    if (!bitmapPathOk()) { requestAsImg(i); return; }
+    fetch(slotUrl(i), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.blob() : Promise.reject(r.status); })
+      .then(function (blob) { return createImageBitmap(blob); })
+      .then(function (bmp) {
+        var old = slotImage(i);
+        if (old && old.close && old !== bmp) { old.close(); }
+        slotStore(i, bmp);
+        slotDone(i);
+      })['catch'](function () { slotDone(i); });
+  }
+
+  /* The other path: an engine without createImageBitmap (Safari before
+     15), or a viewport that letterboxes the frame far enough down that the
+     bitmap resampler would cost sharpness. Same slots, same window, same
+     close()-guard — an <img> has no close(), so the sweep just drops the
+     reference as it always did — and the decode goes back to wherever the
+     engine wants to put it, which is exactly what shipped. */
+  function requestAsImg(i) {
+    var img = new Image();
+    img.decoding = 'async';
+    img.onload  = function () { slotStore(i, img); slotDone(i); };
+    img.onerror = function () { slotDone(i); };
     img.src = slotUrl(i);
   }
 
@@ -2683,9 +2800,8 @@
     }
     while (inFlight < MAX_PARALLEL && queueAt < LOAD_TOTAL) {
       var i = queueAt++;
-      var im = slotImage(i);
       // Already in hand, or already on the wire from the lane above.
-      if (busy[i] || (im && im.complete && im.naturalWidth)) { continue; }
+      if (busy[i] || have(slotImage(i))) { continue; }
       request(i);
     }
   }
