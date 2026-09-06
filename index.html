@@ -10,9 +10,32 @@
 <title>Journey</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Assistant:wght@300&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Assistant:wght@300;400;600&display=swap">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* ------------------------------------------------------------------
+     The palette, written down once.
+
+     Nothing above the closing section changes colour. These are the
+     values already in this stylesheet — cap-4's warm #4A3528 is the
+     family --ink and --dark come out of — together with the ones the
+     approved mockup was drawn in, named so the veil and the section it
+     leads into cannot drift apart.
+  ------------------------------------------------------------------ */
+  :root {
+    --cream:       #F7F3EC;   /* the veil, and the ground under the form */
+    --ink:         #2E211A;   /* the sentence the section opens on */
+    --body:        #5B5148;   /* running text */
+    --bronze:      #8C5C3A;   /* wordmarks, the second line, the focus rule */
+    --bronze-deep: #74421F;   /* headings */
+    --dark:        #433023;   /* the one dark block on the page */
+    --hair:        rgba(0, 0, 0, .12);   /* the hairlines: 12% black, as briefed */
+    /* The line under a field is not a hairline between blocks — it is the
+       only thing that says a field is there, and 12% black on cream is
+       1.3:1. This is the same line at the alpha that reaches 3:1. */
+    --rule:        rgba(0, 0, 0, .44);
+  }
 
   html, body {
     background: #000;
@@ -47,8 +70,22 @@
      165vh each for frames11 and frames12, then 90vh of the closing bit
      and 80vh held on the terrace.
      SPACER_VH in the script has to agree with this number: every boundary
-     down there is measured in vh read back off this element. */
+     down there is measured in vh read back off this element.
+
+     Which is exactly why the 90vh of crossing into the closing section is
+     #cross below and not 90 more vh here. The unit every boundary in the
+     journey is measured through is this element's own laid-out box over
+     SPACER_VH, and that box is quantised to 1/64 of a pixel: growing it
+     and the constant together keeps the unit right but not identical —
+     it moves in the sixth decimal, which is a couple of grey levels on a
+     couple of per cent of the descent. Left alone it is the same double
+     it was, and so is every boundary read through it. */
   #spacer { height: 2280vh; width: 100%; pointer-events: none; }
+
+  /* The crossing: 90vh of scroll at the foot of the spacer and nothing in
+     it but the veil coming up. Its own element for the reason above, and
+     empty for the same reason the spacer is. */
+  #cross { height: 90vh; width: 100%; pointer-events: none; }
 
   /* The opening screen's ground: frame one of the strip, in the same
      cover fit the canvas gives it, so it is the picture the page shows
@@ -335,8 +372,458 @@
   .cap-4 .he { margin-right: auto; margin-left: 0; }
   .cap-4 .en, .cap-4 .he { text-shadow: 0 1px 16px rgba(255, 255, 255, .55); }
 
+
+  /* ==================================================================
+     THE CLOSING SECTION, AND THE CROSSING INTO IT.
+
+     Everything from here down is ordinary HTML in normal flow, laid over
+     two fixed layers that never leave: the cream veil, and the canvas
+     under it. The canvas is not removed, not display:none'd and not
+     dropped to zero — it stays fixed behind the cream at 8% for the
+     whole of the section, blurred and pushed to 1.05, which is what the
+     section is standing on rather than a flat colour.
+
+     No new scroll listener and no new rAF. The veil, the blur and the
+     opening sentence are written from overlay(), off the same y the
+     captions are read from, on the loop that was already running.
+  ================================================================== */
+
+  /* The veil. One fixed sheet of cream, and the scroll writes nothing on
+     it but opacity: 0 at the last beat of the terrace, .92 ninety vh
+     later, and .92 for the rest of the page. Above the black falloffs
+     rather than under them — those belong to the journey, and the loop
+     takes them down across the same 90vh so the cream is a flat field
+     and not a field with a vignette at each end. */
+  /* The letterbox, dissolved with everything else.
+
+     A phone gets cover and the frame fills the glass, so this is nothing
+     there. A landscape desktop gets contain — draw() fits the 9:16 frame
+     onto black rather than throwing three quarters of it away — and those
+     black margins would still read at 8% through the veil: two grey bands
+     down a field that has to be flat cream. So the picture's own rectangle
+     is measured (the same rectangle the caption layer is fitted to) and
+     everything outside it is filled with cream by one spread shadow, on
+     the same 0-to-1 the veil runs on. Under the veil, so the margins end
+     up flat cream and the picture ends up cream with 8% of a terrace in
+     it.
+
+     Two shadows and not one. The outer fills the margins; the inner
+     feathers the picture's own edge into them, because 8% of a sky is
+     only four or five levels off the cream but a straight vertical line
+     of four levels is a line, and the eye finds it.
+
+     The spread is more than half the blur on purpose: any less and the
+     feather is still climbing where the two shadows meet, which leaves a
+     softer version of the same line rather than no line. Written from
+     fitMargins() rather than here, because it has to be a share of the
+     picture's own width and not a number of pixels: the same 90 that
+     softens a 507px-wide letterbox on a desktop would swallow the 220px
+     one an iPhone in landscape gets, and the section would then be
+     standing on flat cream with no picture behind it at all. */
+  #margins {
+    position: fixed;
+    left: 0; top: 0; width: 0; height: 0;
+    z-index: 8;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  /* Only when there is actually a letterbox to fill. A phone in portrait
+     gets cover, the frame overruns the glass on every side, and this layer
+     would then have nothing to do but feather a veil the brief asked to be
+     flat — so there it carries no shadow at all, is never promoted, and
+     the cream over the picture is the veil's .92 and nothing else. */
+  #margins.boxed { will-change: opacity; }
+
+  #veil {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--cream);
+    opacity: 0;
+    visibility: hidden;
+    z-index: 8;
+    pointer-events: none;
+    will-change: opacity;
+  }
+
+  /* ---- the sentence the section opens on ----------------------------
+     Fixed, because it belongs to the crossing and not to the page under
+     it: it comes up over the terrace while that is still dissolving, and
+     it is gone again before the first block reaches the foot of the
+     screen. The scroll writes the box's opacity — up at 60% of the
+     crossing, down over the 35vh after it — and the two lines inside it
+     carry their own transitions, which is where the 150ms between them
+     comes from.
+  ------------------------------------------------------------------ */
+  #cl-intro {
+    position: fixed;
+    left: 0; right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    padding: 0 calc(22px + env(safe-area-inset-right, 0px))
+             0 calc(22px + env(safe-area-inset-left, 0px));
+    text-align: center;
+    font-family: "Assistant", "Heebo", "Rubik", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .cl-fade {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity .85s cubic-bezier(.22, .61, .36, 1),
+                transform .85s cubic-bezier(.22, .61, .36, 1);
+  }
+  #cl-intro.is-in .cl-fade { opacity: 1; transform: none; }
+  #cl-intro.is-in .cl-l2   { transition-delay: .15s; }
+  #cl-intro.is-in .cl-rule { transition-delay: .30s; }
+  #cl-intro.is-in .cl-mark { transition-delay: .45s; }
+
+  .cl-l1, .cl-l2 {
+    font-weight: 300;
+    font-size: clamp(27px, 4.6vw, 44px);
+    line-height: 1.35;
+    letter-spacing: -.005em;
+  }
+  .cl-l1 { color: var(--ink); }
+  .cl-l2 { color: var(--bronze); }
+
+  /* Short, centred, and bronze — the mark under the sentence, not a rule
+     across the column. The footer's hairline is a different thing and is
+     .cl-hair. */
+  .cl-rule {
+    width: 46px; height: 1px;
+    margin: clamp(20px, 3vh, 30px) auto 0;
+    background: var(--bronze);
+    opacity: .6;
+  }
+
+  /* The wordmark, in the serif the captions use. Letter-spacing leaves a
+     trailing gap after the last glyph, which on a centred line carries
+     the whole thing half of it to the left; the padding on the inline
+     start puts it back. */
+  .cl-mark {
+    direction: ltr;
+    unicode-bidi: isolate;
+    font-family: "Cormorant Garamond", "Times New Roman", Georgia, serif;
+    font-weight: 400;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: .34em;
+    padding-left: .34em;
+    color: var(--bronze);
+    margin-top: 14px;
+  }
+
+  /* ---- the section itself -------------------------------------------
+     34vh of nothing at the top of it: that is the screen the opening
+     sentence is fading out of, and the first block arrives at the foot
+     of the glass exactly as it finishes.
+  ------------------------------------------------------------------ */
+  #closing {
+    position: relative;
+    z-index: 9;
+    /* The page opts into viewport-fit=cover, so a notch in landscape is
+       inside the layout viewport. Same 22px the captions use. */
+    padding: 34vh calc(22px + env(safe-area-inset-right, 0px))
+             0    calc(22px + env(safe-area-inset-left, 0px));
+    font-family: "Assistant", "Heebo", "Rubik", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    font-weight: 300;
+    color: var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .cl-rows, .cl-form, .cl-foot { max-width: 760px; margin: 0 auto; }
+
+  /* Picture left, words right. The section is rtl, so a row runs
+     right-to-left and row-reverse runs the other way — which puts the
+     first child, the picture, on the left. */
+  .cl-row {
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: flex-start;
+    padding: 36px 0;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity .85s cubic-bezier(.22, .61, .36, 1),
+                transform .85s cubic-bezier(.22, .61, .36, 1);
+  }
+  .cl-row.is-in { opacity: 1; transform: none; }
+  .cl-row + .cl-row { border-top: 1px solid var(--hair); }
+
+  .cl-shot { flex: 0 0 34%; }
+  .cl-shot img { display: block; width: 100%; height: auto; }
+
+  /* The space between the two is a padding on the words and not a flex gap:
+     gap is Safari 14.1 and clamp(), which this stylesheet already leans on
+     everywhere, is 13.1 — no reason to raise the floor for one number.
+     Physical left, because rtl plus row-reverse always puts the picture
+     there and the words to its right. */
+  .cl-copy { flex: 1 1 auto; padding-left: 26px; }
+
+  .cl-copy h2 {
+    font-weight: 600;
+    font-size: clamp(20px, 2.7vw, 26px);
+    line-height: 1.32;
+    color: var(--bronze-deep);
+  }
+  .cl-copy p {
+    margin-top: 12px;
+    font-weight: 300;
+    font-size: clamp(14px, 1.7vw, 16px);
+    line-height: 1.9;
+    color: var(--body);
+  }
+
+  /* ---- the form ------------------------------------------------------ */
+
+  .cl-form { padding-top: clamp(34px, 6vh, 64px); }
+
+  /* Relative, because the dark block is taken out of flow on success and
+     grown over this box. Its height is locked at that moment, in the
+     script, so nothing under it moves. */
+  .cl-form-zone { position: relative; }
+
+  .cl-head { text-align: center; transition: opacity .5s ease; }
+  .cl-head h2 {
+    font-weight: 600;
+    font-size: clamp(24px, 3.3vw, 31px);
+    line-height: 1.3;
+    color: var(--bronze-deep);
+  }
+  .cl-head p {
+    margin-top: 10px;
+    font-weight: 300;
+    font-size: clamp(14px, 1.8vw, 16px);
+    color: var(--body);
+  }
+
+  .cl-fields { margin-top: clamp(34px, 5vh, 52px); transition: opacity .5s ease; }
+  .cl-field  { margin-bottom: clamp(30px, 4.4vh, 44px); }
+
+  /* No box and no fill — one line under each field and nothing else. The
+     focus state thickens that line to two pixels and colours it bronze,
+     and it does it with a box-shadow sitting directly under the border
+     rather than with a wider border, so the field cannot change height
+     and nothing below it can move. */
+  .cl-field input {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    box-shadow: 0 1px 0 0 rgba(140, 92, 58, 0);
+    border-radius: 0;
+    padding: 10px 2px 12px;
+    font-family: inherit;
+    font-weight: 300;
+    /* 16px and not a hair less: iOS zooms the whole page in on a field
+       whose type is smaller than that, and the page it would be zooming
+       is a fixed canvas. */
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--ink);
+    text-align: right;
+    transition: border-color .25s ease, box-shadow .25s ease;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  /* The placeholder is the only visible name a field has here — the real
+     <label> is off screen — so it is held at 4.9:1 rather than at the
+     grey a placeholder normally gets away with. */
+  .cl-field input::-webkit-input-placeholder { color: rgba(46, 33, 26, .66); }
+  .cl-field input::placeholder { color: rgba(46, 33, 26, .66); opacity: 1; }
+  .cl-field input:focus {
+    outline: none;
+    border-bottom-color: var(--bronze);
+    box-shadow: 0 1px 0 0 var(--bronze);
+  }
+
+  /* Autofill. Both engines paint a solid panel into a field they have
+     filled, which is the one thing these fields may not have. An inset
+     shadow is the only lever either of them honours, and it is painted in
+     the cream the section stands on — a couple of levels off the veiled
+     ground behind, against a blue or yellow slab. Four rules and not two
+     lists: an engine that does not know one of these selectors would drop
+     whatever was listed beside it. */
+  .cl-field input:-webkit-autofill {
+    -webkit-text-fill-color: var(--ink);
+    -webkit-box-shadow: 0 0 0 100px var(--cream) inset;
+    caret-color: var(--ink);
+  }
+  .cl-field input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 100px var(--cream) inset, 0 1px 0 0 var(--bronze);
+  }
+  .cl-field input:autofill {
+    box-shadow: 0 0 0 100px var(--cream) inset;
+  }
+  .cl-field input:autofill:focus {
+    box-shadow: 0 0 0 100px var(--cream) inset, 0 1px 0 0 var(--bronze);
+  }
+
+  /* A number and an address are read left to right whatever the page is.
+     Right-aligned still, so the three fields line up. */
+  #cl-phone, #cl-email { direction: ltr; text-align: right; }
+
+  /* ---- the dark block ------------------------------------------------ */
+
+  .cl-cta {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 96px;
+    margin-top: clamp(34px, 5vh, 54px);
+    padding: 0 30px;
+    background: var(--dark);
+    border: 0;
+    border-radius: 0;
+    color: var(--cream);
+    font-family: inherit;
+    font-weight: 400;
+    font-size: clamp(17px, 2.1vw, 20px);
+    text-align: right;
+    cursor: pointer;
+    overflow: hidden;
+    -webkit-appearance: none;
+    appearance: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color .3s ease,
+                top .5s cubic-bezier(.4, 0, .2, 1),
+                height .5s cubic-bezier(.4, 0, .2, 1);
+  }
+  /* Three rules and not one list. A selector list is dropped whole if any
+     selector in it fails to parse, and :focus-visible does not parse before
+     Safari 15.4 — listed alongside :hover it would take the hover state
+     down with it on exactly the phones this page is written for. */
+  .cl-cta:hover, .cl-cta:active { background: #55402E; }
+  .cl-cta:focus-visible { background: #55402E; outline: 2px solid var(--bronze); outline-offset: 3px; }
+
+  .cl-cta-label { transition: opacity .3s ease; }
+
+  .cl-cta-arrow {
+    flex: none;
+    display: block;
+    width: 62px; height: 24px;
+    transition: transform .35s cubic-bezier(.22, .61, .36, 1), opacity .3s ease;
+  }
+  .cl-cta:hover  .cl-cta-arrow,
+  .cl-cta:active .cl-cta-arrow { transform: translateX(-12px); }
+  .cl-cta:focus-visible .cl-cta-arrow { transform: translateX(-12px); }
+
+  /* The thank-you lives inside the block that grows, centred on it, and
+     comes up a beat after the growth starts. */
+  .cl-thanks {
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .4s ease .2s;
+  }
+  .cl-thanks b {
+    display: block;
+    font-weight: 400;
+    font-size: clamp(23px, 3.2vw, 30px);
+    line-height: 1.3;
+  }
+  .cl-thanks i {
+    display: block;
+    margin-top: 10px;
+    font-style: normal;
+    font-weight: 300;
+    font-size: clamp(14px, 1.8vw, 16px);
+    opacity: .78;
+  }
+
+  /* visibility, not just opacity: a field faded to nothing is still in the
+     tab order and still in the accessibility tree, and tabbing into an
+     invisible input underneath the thank-you block is worse than the
+     block not being there. Held until the fade has finished. */
+  .cl-form-zone.is-sent .cl-head,
+  .cl-form-zone.is-sent .cl-fields {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .5s ease, visibility 0s linear .5s;
+  }
+  /* visibility again, and for the same reason: a label at opacity 0 is
+     still read out, and the block must not say "I want to hear more,
+     thank you". */
+  .cl-form-zone.is-sent .cl-cta-label,
+  .cl-form-zone.is-sent .cl-cta-arrow {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .3s ease, visibility 0s linear .3s;
+  }
+  /* Not disabled, in the script or here. Disabling the block would drop
+     the keyboard user's focus to <body> — back to the top of a 2280vh
+     page — at the exact moment the block becomes the thing that answers
+     them. It stays focusable and stops being clickable instead, and a
+     second submit is refused in succeed(). */
+  .cl-form-zone.is-sent .cl-cta { cursor: default; pointer-events: none; }
+  .cl-form-zone.is-sent .cl-thanks   { opacity: 1; }
+
+  /* ---- the foot ------------------------------------------------------ */
+
+  .cl-foot {
+    padding: clamp(44px, 7vh, 76px) 0
+             calc(clamp(40px, 6vh, 64px) + env(safe-area-inset-bottom, 0px));
+    text-align: center;
+  }
+  .cl-hair { height: 1px; background: var(--hair); margin-bottom: clamp(24px, 4vh, 36px); }
+  /* Smaller than the wordmark above it, and at full strength: the .82 it
+     had put it at 3.5:1, which is under the floor for text this size. */
+  .cl-town {
+    margin-top: 10px;
+    font-weight: 300;
+    font-size: 11px;
+    letter-spacing: .06em;
+    color: var(--bronze);
+  }
+
+  /* Real labels, off screen — the placeholder is the visible name of the
+     field, exactly as the mockup draws it. */
+  .cl-vh {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+  }
+
+  /* One breakpoint, and it is where the picture stops being able to hold
+     a column next to four lines of Hebrew. Below it the row stacks:
+     picture full width, words under it. */
+  @media (max-width: 640px) {
+    .cl-row   { flex-direction: column; padding: 30px 0; }
+    .cl-shot  { flex: none; width: 100%; }
+    .cl-copy  { padding-left: 0; margin-top: 18px; }
+    .cl-cta   { min-height: 88px; padding: 0 22px; }
+    .cl-cta-arrow { width: 52px; height: 20px; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     #bar { transition: none; }
+    /* The veil and the blur are read off the scroll position rather than
+       animated, so they stay. What goes is everything that moves on a
+       clock: the blocks and the opening sentence are simply there. */
+    .cl-fade, .cl-row, .cl-cta, .cl-cta-label, .cl-cta-arrow, .cl-thanks,
+    .cl-head, .cl-fields, .cl-field input { transition-duration: .001s; }
+    /* .cl-row only. .cl-fade is the opening sentence, and forcing that
+       visible would put it on screen at the first pixel of the crossing,
+       over a terrace that has not started dissolving — the scroll position
+       it appears at is choreography, not motion, and it stays. What goes is
+       the 20px of travel, the fade and the 150ms between the lines. */
+    .cl-row { opacity: 1; transform: none; }
+    .cl-fade { transform: none; }
+    #cl-intro.is-in .cl-fade { transition-delay: 0s; }
   }
 </style>
 </head>
@@ -391,6 +878,142 @@
      last 170vh are the closing bit, 90 of movement and 80 held on the
      terrace. Intentionally left empty. -->
 <div id="spacer"></div>
+
+<!-- And 90vh under it: the crossing into the closing section. Its own
+     element rather than 90 more vh of spacer, so that the unit the
+     journey's boundaries are measured through is untouched. Also empty. -->
+<div id="cross"></div>
+
+<!-- ==================================================================
+     The closing section.
+
+     Nothing below this line touches the journey. The veil comes up over
+     the last 90vh of the spacer and holds; the canvas stays fixed behind
+     it, blurred, for the rest of the page; and the section itself is
+     ordinary flow on top of both. Every word here is HTML, not pixels in
+     a JPG.
+================================================================== -->
+<div id="margins" aria-hidden="true"></div>
+<div id="veil" aria-hidden="true"></div>
+
+<!-- The sentence the section opens on. Fixed rather than in flow: it
+     belongs to the crossing, materialising over the terrace as that
+     dissolves, and it is gone before the first block arrives. -->
+<div id="cl-intro">
+  <p class="cl-fade cl-l1">יש בתים יפים.</p>
+  <p class="cl-fade cl-l2">ויש בתים שמרגישים אחרת.</p>
+  <div class="cl-fade cl-rule" aria-hidden="true"></div>
+  <p class="cl-fade cl-mark">ALTA SKY RESIDENCE</p>
+</div>
+
+<section id="closing">
+
+  <!-- Three blocks. No new photography: the pictures are crops of frames
+       that were already in this repo, exported to /form at 800x480, JPEG
+       quality 82, so they can be swapped for real photography later
+       without touching anything here.
+         r1  frames3/014.jpg   crop  (0, 470)-(960, 1046)   facade, balconies
+         r2  frames12/046.jpg  crop  (125, 555)-(960, 1056) terrace and pool
+         r3  frames12/006.jpg  crop  (0, 570)-(960, 1146)   kitchen and living
+       Each crop was trimmed to 5:3 about its centre and resampled to 800
+       wide. The frames themselves are untouched. -->
+  <div class="cl-rows">
+
+    <article class="cl-row" data-delay="0">
+      <div class="cl-shot">
+        <img src="form/r1.jpg" width="800" height="480" loading="lazy" decoding="async"
+             alt="חזית הבניין והמרפסות">
+      </div>
+      <div class="cl-copy">
+        <h2>וילה פרטית מעל העיר</h2>
+        <p>פנטהאוז שנבנה לחיים פתוחים באמת — מרחבי חוץ נדיבים, אור טבעי, ותחושת פרטיות שנשארת איתכם לאורך כל היום.</p>
+      </div>
+    </article>
+
+    <article class="cl-row" data-delay="120">
+      <div class="cl-shot">
+        <img src="form/r2.jpg" width="800" height="480" loading="lazy" decoding="async"
+             alt="הטרסה והבריכה">
+      </div>
+      <div class="cl-copy">
+        <h2>שקט, אור, וחוויית מגורים</h2>
+        <p>מהבריכה והאירוח בחוץ ועד לחללים הפנימיים, כל פרט תוכנן כדי ליצור חוויית מגורים רגועה ואלגנטית.</p>
+      </div>
+    </article>
+
+    <article class="cl-row" data-delay="240">
+      <div class="cl-shot">
+        <img src="form/r3.jpg" width="800" height="480" loading="lazy" decoding="async"
+             alt="המטבח והסלון">
+      </div>
+      <div class="cl-copy">
+        <h2>קרוב למה שחשוב</h2>
+        <p>מיקום שמאפשר ליהנות מהירוק, מהשקט ומהנגישות — בלי להתפשר על איכות החיים ובלי לוותר על קצב נכון של יום־יום.</p>
+      </div>
+    </article>
+
+  </div>
+
+  <!-- The form. No box around a field and no fill in one: a line, and the
+       name of the field sitting on it. -->
+  <div class="cl-form">
+    <div class="cl-form-zone" id="cl-zone">
+
+      <div class="cl-head" id="cl-head">
+        <h2>לתיאום סיור פרטי</h2>
+        <p>השאירו פרטים ונחזור אליכם בהקדם</p>
+      </div>
+
+      <!-- No action and no method, because there is nothing to post to
+           yet. That is housekeeping and not a safety net — a form with no
+           action still submits to the current URL if the handler below
+           never attaches; but the handler is in the same script as the
+           canvas, so a page that lost it has nothing left to protect. The
+           endpoint, when there is one, goes in FORM_ENDPOINT. -->
+      <form id="cl-form">
+        <div class="cl-fields" id="cl-fields">
+          <div class="cl-field">
+            <label class="cl-vh" for="cl-name">שם מלא</label>
+            <input id="cl-name" name="name" type="text" placeholder="שם מלא"
+                   autocomplete="name" required>
+          </div>
+          <div class="cl-field">
+            <label class="cl-vh" for="cl-phone">טלפון</label>
+            <input id="cl-phone" name="phone" type="tel" inputmode="tel" placeholder="טלפון"
+                   autocomplete="tel" required>
+          </div>
+          <div class="cl-field">
+            <label class="cl-vh" for="cl-email">אימייל</label>
+            <input id="cl-email" name="email" type="email" inputmode="email" placeholder="אימייל"
+                   autocomplete="email">
+          </div>
+        </div>
+
+        <button class="cl-cta" id="cl-cta" type="submit">
+          <span class="cl-cta-label">אני רוצה לשמוע עוד</span>
+          <svg class="cl-cta-arrow" viewBox="0 0 64 24" aria-hidden="true" focusable="false">
+            <path d="M63 12H2M12.5 2.5 2 12l10.5 9.5" fill="none" stroke="currentColor"
+                  stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="cl-thanks" aria-hidden="true">
+            <b>תודה.</b>
+            <i>נחזור אליכם בהקדם.</i>
+          </span>
+        </button>
+      </form>
+
+      <p class="cl-vh" id="cl-status" role="status" aria-live="polite"></p>
+
+    </div>
+  </div>
+
+  <footer class="cl-foot">
+    <div class="cl-hair" aria-hidden="true"></div>
+    <p class="cl-mark">ALTA SKY RESIDENCE</p>
+    <p class="cl-town">אבן יהודה</p>
+  </footer>
+
+</section>
 
 <script>
 (function () {
@@ -765,7 +1388,34 @@
   var CAP4_FADE_VH = 20;    // of the hold's end, over which it goes again
   var TAIL_VH     = 165;    // each of frames11 and frames12
   var BIT_VH      = 90;     // the two layers sliding against each other
-  var END_HOLD_VH = 80;     // parked on the terrace; the foot of the page
+  var END_HOLD_VH = 80;     // parked on the terrace; the last beat of it
+
+  /* ------------------------------------------------------------------
+     The crossing into the closing section.
+
+     90vh appended to the foot of the spacer, and the only thing in them
+     is a dissolve: a fixed sheet of cream from 0 to .92 while the canvas
+     behind it goes to 8px of blur and 1.05 of scale. Linear, and on the
+     raw scroll position rather than on a playhead — it is a dissolve, not
+     a move, and an ease or a lag on it reads as the page hesitating on
+     the way out of the journey.
+
+     Everything past it is clamped: the cream holds at .92 and the picture
+     holds blurred for the whole of the section below, which is what that
+     section is standing on. The canvas is never removed from the DOM and
+     never hidden.
+
+     Nothing above M.endHold knows any of this exists — the 90vh are a
+     separate element below the spacer, so the unit every boundary in the
+     journey is measured through is the same double it was and the whole
+     journey is byte-identical to what it was.
+  ------------------------------------------------------------------ */
+  var VEIL_VH      = 90;      // #cross, the 90vh at the foot of the spacer
+  var VEIL_MAX     = 0.92;    // where the cream settles, and stays
+  var VEIL_BLUR    = 8;       // px of blur on the canvas at the far end
+  var VEIL_ZOOM    = 1.05;    // and the scale it is pushed to
+  var INTRO_AT     = 0.60;    // of the crossing, where the sentence comes up
+  var INTRO_OUT_VH = 35;      // and the scroll past it over which it goes
 
   /* ------------------------------------------------------------------
      The tail's pacing.
@@ -839,6 +1489,10 @@
   var caps   = document.getElementById('caps');
   var cap4   = document.getElementById('cap4');
   var spacer = document.getElementById('spacer');
+  var veil   = document.getElementById('veil');
+  var margins = document.getElementById('margins');
+  var intro  = document.getElementById('cl-intro');
+  var grads  = document.getElementsByClassName('grad');
   var root   = document.documentElement;
 
   for (var cn = 0; cn < CAPTIONS.length; cn++) {
@@ -858,9 +1512,10 @@
   /* ---- viewport / scroll metrics ---------------------------------- */
 
   var M = {
-    vh: 1, maxScroll: 1, animEnd: 1,
+    vh: 1, unit: 1, maxScroll: 1, animEnd: 1,
     journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1,
-    cap4Fade: 1, holdEnd: 1, tailEnd: 1, bitEnd: 1, endHold: 1
+    cap4Fade: 1, holdEnd: 1, tailEnd: 1, bitEnd: 1, endHold: 1,
+    veilEnd: 1, introOut: 1
   };
 
   function measure() {
@@ -931,6 +1586,16 @@
     // Then 80vh parked on the terrace, and that is the foot of the page.
     M.bitEnd       = M.tailEnd + BIT_VH * unit;
     M.endHold      = M.bitEnd + END_HOLD_VH * unit;
+
+    // The crossing, and nothing before it: endHold is the last beat of
+    // the terrace and the pixel the page used to stop on. The veil runs
+    // the 90vh after it and then holds, and the opening sentence is gone
+    // INTRO_OUT_VH past that — by which point the section's own 34vh of
+    // top padding has just brought its first block to the foot of the
+    // glass.
+    M.veilEnd      = M.endHold + VEIL_VH * unit;
+    M.introOut     = M.veilEnd + INTRO_OUT_VH * unit;
+    M.unit         = unit;
   }
 
   // Read the scroll offset from both sources; iOS reports through
@@ -1234,14 +1899,51 @@
     caps.style.setProperty('--caph', h + 'px');
   }
 
-  // One measurement of the window per frame, handed to both layers. Both
-  // early-out unless the rectangle actually moved.
+  /* The cream that fills whatever of the screen the picture is not on.
+     Placed off the same rectangle the caption layer is, so it cannot
+     disagree with it, and left at 0x0 until frame one has decoded — at
+     which point the crossing is 2280vh away and nothing has been seen. */
+  var marginsFit = '';
+
+  function fitMargins(r) {
+    if (!r) { return; }
+    var fit = r.dx + '/' + r.dy + '/' + r.dw + '/' + r.dh;
+    if (fit === marginsFit) { return; }
+    marginsFit = fit;
+    // Letterboxed, i.e. there is screen the picture is not on. Half a
+    // pixel of slack so a rounding artefact on a phone cannot switch it on.
+    var boxed = (r.dx > 0.5 || r.dy > 0.5);
+    margins.className = boxed ? 'boxed' : '';
+
+    /* The feather, as a share of the picture's width rather than a number
+       of pixels. A desktop letterboxes the frame to about a third of the
+       glass and an iPhone in landscape to about a quarter of it, and a
+       fixed 90px spread that reads as a soft edge on the first erases the
+       second outright. Fourteen per cent of the width, blurred over 1.7
+       times that — the ratio is what matters, because the spread has to
+       exceed half the blur or the two shadows do not meet at full cream
+       and the edge comes back. */
+    var sp = Math.max(12, r.dw * 0.14);
+    margins.style.boxShadow = boxed
+      ? '0 0 0 100vmax var(--cream), inset 0 0 ' +
+        (sp * 1.7).toFixed(1) + 'px ' + sp.toFixed(1) + 'px var(--cream)'
+      : '';
+
+    margins.style.left   = r.dx + 'px';
+    margins.style.top    = r.dy + 'px';
+    margins.style.width  = r.dw + 'px';
+    margins.style.height = r.dh + 'px';
+  }
+
+  // One measurement of the window per frame, handed to all three layers.
+  // Each early-outs unless the rectangle actually moved.
   function layout() {
     var vw = window.innerWidth  || root.clientWidth  || 1;
     var vh = window.innerHeight || root.clientHeight || 1;
     var r  = frameRect(vw, vh);
     fitLogo(r);
     fitCaps(vw, vh, r);
+    fitMargins(r);
   }
 
   /* ---- overlay opacity ------------------------------------------------
@@ -1327,6 +2029,14 @@
   var LOGO_FADE  = 0.06;   // of the journey, i.e. of the page as it was
   var logoShown  = -1;
   var cap4Shown  = -1;
+  var veilShown  = -1;
+  var introShown = -1;
+  var introIn    = false;
+  /* Handed to this by the closing section's own block at the foot of the
+     file, and called back with nothing but a tick. See it for why an
+     IntersectionObserver needs one. Null once there is nothing left to
+     reveal, which is what keeps it free. */
+  var sweepRows  = null;
   var posterDown = false;
 
   function overlay(y) {
@@ -1378,6 +2088,64 @@
       // Drop the layer out of the compositor once it is gone.
       logo.style.visibility = lo > 0 ? 'visible' : 'hidden';
     }
+
+    /* ---- the crossing --------------------------------------------------
+       A pure function of y like everything else here, which is why the
+       cream and the blur look identical on the way back up and why an
+       overshoot that springs back cannot leave the picture half dissolved.
+       Written once per change and not once per frame.
+
+       The two black falloffs go down over the same 90vh. They are the
+       journey's, and left up they would put a vignette on each end of what
+       has to be a flat field of cream — .85 of them still reads through
+       .92 of veil.
+    ------------------------------------------------------------------ */
+    var vp = clamp((y - M.endHold) / (M.veilEnd - M.endHold), 0, 1);
+    if (vp !== veilShown) {
+      veilShown = vp;
+      veil.style.opacity    = VEIL_MAX * vp;
+      veil.style.visibility = vp > 0 ? 'visible' : 'hidden';
+      // Full strength rather than VEIL_MAX: what is under this is black,
+      // not a photograph, and 8% of black is the one thing the section
+      // must not be standing on.
+      margins.style.opacity    = vp;
+      margins.style.visibility = vp > 0 ? 'visible' : 'hidden';
+      canvas.style.filter    = vp > 0 ? 'blur(' + (VEIL_BLUR * vp).toFixed(2) + 'px)' : '';
+      canvas.style.transform = vp > 0
+        ? 'translateZ(0) scale(' + (1 + (VEIL_ZOOM - 1) * vp).toFixed(4) + ')'
+        : '';
+      for (var gi = 0; gi < grads.length; gi++) {
+        grads[gi].style.opacity = 0.85 * (1 - vp);
+      }
+      // Sixty per cent of the crossing is where the sentence comes up. The
+      // class is the trigger and the stylesheet holds the timing, which is
+      // where the 150ms between the two lines lives; taking it off again on
+      // the way back up is what makes the crossing repeat rather than stay
+      // spent.
+      // Hysteresis, because a thumb resting on the threshold would
+      // otherwise restart the entrance on every pixel of jitter: on at
+      // INTRO_AT, off again only six points below it.
+      var wantIn = introIn ? (vp >= INTRO_AT - 0.06) : (vp >= INTRO_AT);
+      if (wantIn !== introIn) {
+        introIn = wantIn;
+        intro.className = wantIn ? 'is-in' : '';
+      }
+    }
+
+    // And its way out, which is not part of the crossing: the box fades
+    // over the first INTRO_OUT_VH of the section, while the 34vh of top
+    // padding below is still the only thing on screen.
+    var io = (y < M.endHold) ? 0
+           : 1 - easeInOut(clamp((y - M.veilEnd) / (M.introOut - M.veilEnd), 0, 1));
+    if (io !== introShown) {
+      introShown = io;
+      intro.style.opacity = io;
+    }
+
+    // The observer's backstop, and only inside the section it belongs to:
+    // above M.endHold there is nothing of it on screen to reveal, so the
+    // journey never pays for this.
+    if (sweepRows && y > M.endHold) { sweepRows = sweepRows(); }
   }
 
   // The canvas has a frame of its own up, so the still underneath it has
@@ -1946,6 +2714,192 @@
 
   pump();
   kick();
+
+  /* ==================================================================
+     The closing section.
+
+     Two small things and nothing else: the blocks come up as they arrive,
+     and the form answers a submit without leaving the page. Neither of
+     them listens to scroll — the blocks are an IntersectionObserver and
+     the form is a submit handler — so the loop above is still the only
+     thing reading the scroll position.
+  ================================================================== */
+
+  /* Where the details will be posted when there is somewhere to post
+     them. Empty is the whole of the current behaviour: preventDefault,
+     then straight to the success state, no request and no navigation.
+     Written with var rather than const only because this file is ES5
+     throughout and one keyword out of place is one keyword too many. */
+  var FORM_ENDPOINT = '';   // TODO
+
+  /* ---- the blocks ---------------------------------------------------
+     fade + 20px, one observer for the three of them, and the stagger is
+     the data-delay on each. The delay matters when two arrive on the same
+     screen, which is what a fast flick down the section does.
+  ------------------------------------------------------------------ */
+  (function () {
+    var rows = document.getElementsByClassName('cl-row');
+    var i;
+
+    function show(el) {
+      el.style.transitionDelay = (el.getAttribute('data-delay') || 0) + 'ms';
+      el.className = el.className + ' is-in';
+    }
+
+    if (!('IntersectionObserver' in window)) {
+      for (i = 0; i < rows.length; i++) { show(rows[i]); }
+      return;
+    }
+
+    var obs = new IntersectionObserver(function (entries) {
+      for (var k = 0; k < entries.length; k++) {
+        var e = entries[k];
+        // Intersecting, or already gone by above the screen. The second
+        // clause is the one that matters: a flick fast enough to carry a
+        // block across the glass between two of the observer's samples
+        // leaves it un-notified, and without this it would sit at opacity
+        // 0 for the rest of the session — invisible content, on the way
+        // back up as well as down.
+        if (!e.isIntersecting && e.boundingClientRect.top >= 0) { continue; }
+        show(e.target);
+        obs.unobserve(e.target);
+      }
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.15 });
+
+    for (i = 0; i < rows.length; i++) { obs.observe(rows[i]); }
+
+    /* And a backstop, because an observer is not enough on its own.
+
+       An IntersectionObserver reports a CHANGE in intersection. A jump —
+       the End key, a restored scroll position, an anchor, a
+       scrollTo(0, scrollHeight) — can carry a block from below the screen
+       to above it between two of the observer's samples without it ever
+       having intersected, and the ratio goes 0 to 0 with nothing reported.
+       The block then sits at opacity 0 for the rest of the session, on the
+       way back up as well as down. Measured: jumping straight to the foot
+       of the page leaves the first two blocks invisible.
+
+       So the loop that is already reading the scroll position hands this a
+       tick while the reader is inside the section — no second listener and
+       no second rAF, it is a call at the end of overlay() — and it reveals
+       whatever the observer cannot have seen. It returns null the moment
+       there is nothing left, which unhooks it for good. */
+    sweepRows = function () {
+      var left = 0, k, el;
+      for (k = 0; k < rows.length; k++) {
+        el = rows[k];
+        if (el.className.indexOf('is-in') >= 0) { continue; }
+        if (el.getBoundingClientRect().top < (window.innerHeight || 0)) {
+          show(el);
+          obs.unobserve(el);
+        } else {
+          left++;
+        }
+      }
+      return left ? sweepRows : null;
+    };
+  })();
+
+  /* ---- the form -----------------------------------------------------
+     No navigation and no reload. The fields and the two headings fade,
+     and the dark block is taken out of flow at the size it already has
+     and grown over the box they were in — which is why the box's height
+     is locked first: the footer under it must not move by a pixel.
+
+     Measured and then transitioned rather than animated from a keyframe,
+     so the block starts from exactly where it is standing whatever the
+     screen has made of the form above it.
+  ------------------------------------------------------------------ */
+  (function () {
+    var form   = document.getElementById('cl-form');
+    var zone   = document.getElementById('cl-zone');
+    var head   = document.getElementById('cl-head');
+    var fields = document.getElementById('cl-fields');
+    var cta    = document.getElementById('cl-cta');
+    var status = document.getElementById('cl-status');
+    if (!form || !zone || !cta) { return; }
+
+    var sent   = false;
+    var thanks = cta.getElementsByClassName('cl-thanks')[0];
+
+    /* Put the block back into flow and read the two boxes the growth runs
+       between: the form's own, and the block's inside it. Synchronous, so
+       nothing is painted in between and the reader sees no flicker — and
+       it is a measurement rather than a remembered number, which is what
+       makes it survive a rotation. */
+    function measureZone() {
+      zone.style.height  = '';
+      cta.style.position = '';
+      cta.style.top      = '';
+      cta.style.height   = '';
+      cta.style.margin   = '';
+      return { z: zone.getBoundingClientRect(), b: cta.getBoundingClientRect() };
+    }
+
+    // Lock the form's box at that height and stand the block up inside it
+    // at the given offset and height.
+    function lock(m, top, h) {
+      zone.style.height  = m.z.height + 'px';
+      cta.style.position = 'absolute';
+      cta.style.left     = '0';
+      cta.style.right    = '0';
+      cta.style.margin   = '0';
+      cta.style.top      = top + 'px';
+      cta.style.height   = h + 'px';
+    }
+
+    function succeed() {
+      if (sent) { return; }
+      sent = true;
+
+      var m = measureZone();
+      // Standing exactly where it already is: nothing has moved yet.
+      lock(m, m.b.top - m.z.top, m.b.height);
+      // aria-disabled and not disabled: see the stylesheet. Focus stays on
+      // the block, which is about to be the only thing on the page that
+      // answers the reader — so the thank-you also stops being hidden from
+      // anything reading it, and the label it replaces goes the other way.
+      cta.setAttribute('aria-disabled', 'true');
+      if (thanks) { thanks.removeAttribute('aria-hidden'); }
+
+      // Force the layout, so the two values below are a transition rather
+      // than a jump.
+      /* jshint expr:true */
+      cta.offsetHeight;
+
+      zone.className   = zone.className + ' is-sent';
+      cta.style.top    = '0';
+      cta.style.height = m.z.height + 'px';
+
+      if (status) { status.textContent = 'תודה. נחזור אליכם בהקדם.'; }
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (FORM_ENDPOINT) {
+        // TODO: post the fields here and call succeed() off the response.
+        return;
+      }
+      succeed();
+    });
+
+    /* The lock is in pixels and half of what it was measured from is in vh
+       and vw, so a rotation invalidates it. Measured again rather than
+       adjusted by a remembered difference — the margin above the block and
+       the block's own minimum are both clamp()s, and neither is the number
+       it was in the other orientation. Not a transition: turning a phone
+       is not an animation. */
+    window.addEventListener('resize', function () {
+      if (!sent) { return; }
+      var was = cta.style.transition;
+      cta.style.transition = 'none';
+      var m = measureZone();
+      lock(m, 0, m.z.height);
+      /* jshint expr:true */
+      cta.offsetHeight;
+      cta.style.transition = was;
+    });
+  })();
 })();
 </script>
 </body>
