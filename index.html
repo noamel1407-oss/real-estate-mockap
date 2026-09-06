@@ -750,9 +750,21 @@
     pointer-events: none;
     transition: opacity .5s ease, visibility 0s linear .5s;
   }
+  /* visibility again, and for the same reason: a label at opacity 0 is
+     still read out, and the block must not say "I want to hear more,
+     thank you". */
   .cl-form-zone.is-sent .cl-cta-label,
-  .cl-form-zone.is-sent .cl-cta-arrow { opacity: 0; }
-  .cl-form-zone.is-sent .cl-cta      { cursor: default; }
+  .cl-form-zone.is-sent .cl-cta-arrow {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .3s ease, visibility 0s linear .3s;
+  }
+  /* Not disabled, in the script or here. Disabling the block would drop
+     the keyboard user's focus to <body> — back to the top of a 2280vh
+     page — at the exact moment the block becomes the thing that answers
+     them. It stays focusable and stops being clickable instead, and a
+     second submit is refused in succeed(). */
+  .cl-form-zone.is-sent .cl-cta { cursor: default; pointer-events: none; }
   .cl-form-zone.is-sent .cl-thanks   { opacity: 1; }
 
   /* ---- the foot ------------------------------------------------------ */
@@ -2843,9 +2855,11 @@
       var m = measureZone();
       // Standing exactly where it already is: nothing has moved yet.
       lock(m, m.b.top - m.z.top, m.b.height);
-      cta.disabled = true;
-      // The thank-you is about to be the only thing this block says, so it
-      // stops being hidden from anything reading the page.
+      // aria-disabled and not disabled: see the stylesheet. Focus stays on
+      // the block, which is about to be the only thing on the page that
+      // answers the reader — so the thank-you also stops being hidden from
+      // anything reading it, and the label it replaces goes the other way.
+      cta.setAttribute('aria-disabled', 'true');
       if (thanks) { thanks.removeAttribute('aria-hidden'); }
 
       // Force the layout, so the two values below are a transition rather
