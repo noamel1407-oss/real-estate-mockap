@@ -2387,6 +2387,7 @@
     if (window.innerHeight !== M.vh) { measure(); }
 
     var resized = resize();
+    if (resized) { checkBitmapMode(); }
     layout();
 
     var y = clamp(scrollTop(), 0, M.maxScroll);
@@ -2746,8 +2747,13 @@
      stored rather than thrown away: the next sweep is at most a quarter
      second off and will close them, and dropping them here would mean
      re-fetching a frame a reader who reverses is about to want. */
+  /* fetch() cannot read a file: URL — it rejects rather than returning
+     anything — so opening this page straight off the disk would fail every
+     slot. The <img> path has no such trouble and is what a local preview
+     falls back to. */
   var CAN_BITMAP = (typeof createImageBitmap === 'function' &&
-                    typeof fetch === 'function' && typeof Promise === 'function');
+                    typeof fetch === 'function' && typeof Promise === 'function' &&
+                    location.protocol !== 'file:');
 
   /* ------------------------------------------------------------------
      And the bitmap path is taken only where it costs no sharpness.
@@ -2804,6 +2810,7 @@
   var BYTE_CAP      = 64 * 1024 * 1024;   // 'memory' only
 
   var cachePromise = null;
+  var cacheDead = false;      // caches.open rejected; stop paying for it
   function frameCache() {
     if (!cachePromise) {
       cachePromise = (window.caches ? window.caches.open(CACHE_VERSION)
@@ -2821,7 +2828,7 @@
             })['catch'](function () {});
           }
           return c;
-        })['catch'](function () { return null; });
+        })['catch'](function () { cacheDead = true; return null; });
     }
     return cachePromise;
   }
@@ -2875,15 +2882,22 @@
   var PUT_PARALLEL = 2, PUT_BACKLOG = 8;
   var putQ = [], putBusy = 0;
 
+  /* One job per call, deliberately. `var` is function-scoped, so a while
+     loop that starts two writes in one pass would hand both of their async
+     callbacks the same binding — the second job — and the first write
+     would be dropped while the second went in twice. */
+  function startPut(job) {
+    putBusy++;
+    frameCache().then(function (c) {
+      if (!c) { return null; }
+      return c.put(job.url, job.res);
+    })['catch'](function () {})
+      .then(function () { putBusy--; drainPut(); });
+  }
+
   function drainPut() {
     while (putBusy < PUT_PARALLEL && putQ.length) {
-      var job = putQ.shift();
-      putBusy++;
-      frameCache().then(function (c) {
-        if (!c) { return null; }
-        return c.put(job.url, job.res);
-      })['catch'](function () {})
-        .then(function () { putBusy--; drainPut(); });
+      startPut(putQ.shift());
     }
   }
 
@@ -2904,13 +2918,19 @@
     return Promise.resolve(null);
   }
 
-  /* Three slots are never worth a cache entry: the descent strip and the
-     closing bit's two stills hang off variables of their own and the sweep
-     cannot reach them, so they are fetched once and held for the life of
-     the page. The pinned head and tail are the same story by a different
-     route — pinnedFrame() keeps them, so they are never re-asked either.
-     None of them can ever read this layer back, and writing them is a
-     write for nothing. */
+  /* Which slots are worth a cache entry.
+
+     The descent strip and the closing bit's two stills hang off variables
+     the sweep cannot reach, and the pinned head and tail are kept by
+     pinnedFrame(): thirteen slots that are fetched once and then held for
+     the life of the page. Within a session they can never read this layer
+     back, and not writing them measured six megabytes off the peak.
+
+     They are not free to skip, and the trade is deliberate rather than
+     free: a SECOND visit would have read them back off disk, so a warm
+     reload now fetches those thirteen — about 1.5MB of the 75.95, most of
+     it the descent strip — instead of none. Six megabytes of a phone's
+     memory against 1.5MB on a repeat visit is the right way round. */
   function worthCaching(i) {
     if (i === TOTAL || i === TERR_SLOT || i === JAMB_SLOT) { return false; }
     return !pinnedFrame(i);
@@ -2931,6 +2951,10 @@
       return;
     }
     if (BYTE_STORE === 'cache') {
+      // A private window rejects caches.open. Without this every slot would
+      // still be cloned — the browser buffers the whole body for a clone —
+      // and then dropped, which is the memory cost with none of the benefit.
+      if (cacheDead) { return; }
       putQ.push({ url: url, res: res.clone() });
       // Bounded, so the queue cannot become the thing that holds the memory.
       while (putQ.length > PUT_BACKLOG) { putQ.shift(); }
@@ -2946,6 +2970,40 @@
     return (f.dw / 960) >= BITMAP_MIN_SCALE;
   }
 
+  /* A rotation can carry the frame across that line — a phone turned
+     sideways goes from cover at 0.99 to contain at 0.23 — and a bitmap
+     decoded on the near side of it is soft on the far side. The window
+     would replace most of them within a screen of scrolling, but the
+     pinned head and tail and the three sweep-exempt stills would stay for
+     the rest of the session, and those are the opening screen, the whole
+     descent and the ending. Sharpness is the red line, so a crossing drops
+     every bitmap and lets each come back through whichever path is now
+     right.
+
+     Nothing goes black while they do: paintable() falls back to the
+     nearest frame in hand, and the strip and the closing bit fall back to
+     the last frame of the journey exactly as they do before they land. */
+  var bitmapMode = null;
+
+  function checkBitmapMode() {
+    var ok = bitmapPathOk();
+    if (bitmapMode === null) { bitmapMode = ok; return; }
+    if (ok === bitmapMode) { return; }
+    bitmapMode = ok;
+    for (var i = 0; i <= LAST_SLOT; i++) {
+      var im = slotImage(i);
+      // Only bitmaps: an <img> is already whichever path is correct.
+      if (!im || !im.close) { continue; }
+      if (busy[i]) { continue; }
+      im.close();
+      slotStore(i, null);
+      if (urgent.length < URGENT_CAP) { urgent.push(i); }
+    }
+    lastIdx = -1; lastYOff = -1; lastBit = -1; drewFrom = -1;
+    stripUp = false; bitUp = false;
+    pump();
+  }
+
   function request(i) {
     if (busy[i]) { return; }
     busy[i] = true;
@@ -2953,27 +3011,50 @@
     if (!bitmapPathOk()) { requestAsImg(i); return; }
     var url = slotUrl(i);
     var keep = worthCaching(i);
+    var cameFromCache = false;
+
+    function fromWire() {
+      return fetch(url, { credentials: 'same-origin' })
+        .then(function (r) {
+          if (!r.ok) { return Promise.reject(r.status); }
+          if (keep) { bytesPut(url, r); }
+          // A Blob, not an ArrayBuffer. Measured both: reading the body
+          // into a JS ArrayBuffer and building a Blob from it costs a copy
+          // and came out three megabytes worse, and the browser's own Blob
+          // is the thing createImageBitmap wants anyway.
+          return r.blob();
+        })
+        .then(function (blob) { return createImageBitmap(blob); });
+    }
+
+    function landed(bmp) {
+      var old = slotImage(i);
+      if (old && old.close && old !== bmp) { old.close(); }
+      slotStore(i, bmp);
+      slotDone(i);
+    }
+
     bytesGet(keep ? url : null)
       .then(function (held) {
-        if (held) { return held; }
-        return fetch(url, { credentials: 'same-origin' })
-          .then(function (r) {
-            if (!r.ok) { return Promise.reject(r.status); }
-            if (keep) { bytesPut(url, r); }
-            // A Blob, not an ArrayBuffer. Measured both: reading the body
-            // into a JS ArrayBuffer and building a Blob from it costs a
-            // copy and came out three megabytes worse, and the browser's
-            // own Blob is the thing createImageBitmap wants anyway.
-            return r.blob();
-          });
+        if (!held) { return fromWire(); }
+        cameFromCache = true;
+        return createImageBitmap(held);
       })
-      .then(function (blob) { return createImageBitmap(blob); })
-      .then(function (bmp) {
-        var old = slotImage(i);
-        if (old && old.close && old !== bmp) { old.close(); }
-        slotStore(i, bmp);
-        slotDone(i);
-      })['catch'](function () { slotDone(i); });
+      .then(landed)
+      ['catch'](function () {
+        /* Bytes that will not decode. A stored entry can be truncated — a
+           quota eviction landing mid-write is the realistic way — and
+           without this the slot would read the same bad entry on every
+           retry for the rest of the session and the frame would never
+           appear. Drop the entry and go to the wire once. */
+        if (!cameFromCache) { slotDone(i); return; }
+        frameCache().then(function (c) {
+          if (c && c['delete']) { return c['delete'](url); }
+        })['catch'](function () {})
+          .then(fromWire)
+          .then(landed)
+          ['catch'](function () { slotDone(i); });
+      });
   }
 
   /* The other path: an engine without createImageBitmap (Safari before
