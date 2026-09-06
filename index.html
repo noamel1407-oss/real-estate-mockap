@@ -2632,6 +2632,7 @@
   var queueAt  = 0;    // next slot the sequential walk will request
   var inFlight = 0;
   var gateDone = 0;    // of the first GATE, settled either way
+  var gateSeen = [];   // and each of them counted once, however often it lands
   var stall    = null;
   var loadT0   = 0;    // for the unlock timing reported in the console
 
@@ -2684,7 +2685,9 @@
   function want(i) {
     if (i < 0 || i >= LOAD_TOTAL) { return false; }
     if (busy[i]) { return false; }
-    if (have(slotImage(i))) { return false; }
+    // A stale slot holds a picture from the wrong path, so having one is
+    // exactly why it needs asking for again.
+    if (!stale[i] && have(slotImage(i))) { return false; }
     for (var k = 0; k < urgent.length; k++) {
       if (urgent[k] === i) { return false; }
     }
@@ -2712,7 +2715,8 @@
     inFlight--;
     busy[i] = false;
 
-    if (i < GATE) {
+    if (i < GATE && !gateSeen[i]) {
+      gateSeen[i] = true;
       gateDone++;
       bar.style.width = ((gateDone / GATE) * 100).toFixed(2) + '%';
       if (stall) { clearTimeout(stall); stall = null; }
@@ -2727,6 +2731,7 @@
     // A frame that has just landed may be a better answer than the one
     // paintable() had to settle for, and the loop may well be parked.
     kick();
+    refillStale();
     pump();
   }
 
@@ -2813,8 +2818,13 @@
   var cacheDead = false;      // caches.open rejected; stop paying for it
   function frameCache() {
     if (!cachePromise) {
-      cachePromise = (window.caches ? window.caches.open(CACHE_VERSION)
-                                    : Promise.reject())
+      // A bare read of window.caches can throw in a sandboxed document
+      // rather than merely being undefined, and this runs on the
+      // synchronous path out of request() — a throw here would leave the
+      // slot marked busy and the loader one worker short for good.
+      var api = null;
+      try { api = window.caches || null; } catch (e) { api = null; }
+      cachePromise = (api ? api.open(CACHE_VERSION) : Promise.reject())
         .then(function (c) {
           // Drop any older version of this cache, so a bumped name does
           // not leave the previous one on the reader's disk for ever.
@@ -2886,12 +2896,20 @@
      loop that starts two writes in one pass would hand both of their async
      callbacks the same binding — the second job — and the first write
      would be dropped while the second went in twice. */
+  var putFails = 0;
+
   function startPut(job) {
     putBusy++;
     frameCache().then(function (c) {
       if (!c) { return null; }
       return c.put(job.url, job.res);
-    })['catch'](function () {})
+    }).then(function () { putFails = 0; },
+            function () {
+              // A full origin quota rejects every put from here on. Without
+              // this the write path would go on cloning five hundred bodies
+              // for a cache that will not take one of them.
+              if (++putFails >= 8) { cacheDead = true; putQ.length = 0; }
+            })
       .then(function () { putBusy--; drainPut(); });
   }
 
@@ -2976,14 +2994,18 @@
      would replace most of them within a screen of scrolling, but the
      pinned head and tail and the three sweep-exempt stills would stay for
      the rest of the session, and those are the opening screen, the whole
-     descent and the ending. Sharpness is the red line, so a crossing drops
-     every bitmap and lets each come back through whichever path is now
-     right.
+     descent and the ending. Sharpness is the red line, so a crossing has
+     to replace them.
 
-     Nothing goes black while they do: paintable() falls back to the
-     nearest frame in hand, and the strip and the closing bit fall back to
-     the last frame of the journey exactly as they do before they land. */
+     Marked, not dropped. Closing them all on the spot would leave
+     paintable() with nothing to fall back to and paint one black frame
+     across the rotation — there is no "nearest frame in hand" when every
+     hand is empty. So a crossing only marks them stale; each is re-asked
+     through whichever path is now right, and the old bitmap is closed by
+     landed() at the moment the replacement is in. Nothing is ever without
+     a picture. */
   var bitmapMode = null;
+  var stale = [], staleLeft = 0;
 
   function checkBitmapMode() {
     var ok = bitmapPathOk();
@@ -2994,14 +3016,26 @@
       var im = slotImage(i);
       // Only bitmaps: an <img> is already whichever path is correct.
       if (!im || !im.close) { continue; }
-      if (busy[i]) { continue; }
-      im.close();
-      slotStore(i, null);
-      if (urgent.length < URGENT_CAP) { urgent.push(i); }
+      if (stale[i]) { continue; }
+      stale[i] = true; staleLeft++;
     }
-    lastIdx = -1; lastYOff = -1; lastBit = -1; drewFrom = -1;
-    stripUp = false; bitUp = false;
+    refillStale();
+  }
+
+  // Queue what is left, up to the same cap the window's own refill uses.
+  function refillStale() {
+    if (!staleLeft) { return; }
+    for (var i = 0; i <= LAST_SLOT && urgent.length < URGENT_CAP; i++) {
+      if (!stale[i] || busy[i]) { continue; }
+      var dup = false;
+      for (var k = 0; k < urgent.length; k++) { if (urgent[k] === i) { dup = true; break; } }
+      if (!dup) { urgent.push(i); }
+    }
     pump();
+  }
+
+  function clearStale(i) {
+    if (stale[i]) { stale[i] = false; staleLeft--; }
   }
 
   function request(i) {
@@ -3027,12 +3061,7 @@
         .then(function (blob) { return createImageBitmap(blob); });
     }
 
-    function landed(bmp) {
-      var old = slotImage(i);
-      if (old && old.close && old !== bmp) { old.close(); }
-      slotStore(i, bmp);
-      slotDone(i);
-    }
+    function landed(bmp) { landSlot(i, bmp); }
 
     bytesGet(keep ? url : null)
       .then(function (held) {
@@ -3066,9 +3095,23 @@
   function requestAsImg(i) {
     var img = new Image();
     img.decoding = 'async';
-    img.onload  = function () { slotStore(i, img); slotDone(i); };
+    // Through landed(), not straight to slotStore: replacing a bitmap with
+    // an <img> after a crossing has to close the bitmap, and this is the
+    // one place that knows how.
+    img.onload  = function () { landSlot(i, img); };
     img.onerror = function () { slotDone(i); };
     img.src = slotUrl(i);
+  }
+
+  /* The one way anything enters a slot. Closes whatever it displaces —
+     an ImageBitmap has to be closed by hand and an <img> does not, and
+     either can be replacing either after a scale crossing. */
+  function landSlot(i, im) {
+    var old = slotImage(i);
+    if (old && old.close && old !== im) { old.close(); }
+    slotStore(i, im);
+    clearStale(i);
+    slotDone(i);
   }
 
   function pump() {
@@ -3081,7 +3124,7 @@
     while (inFlight < MAX_PARALLEL && queueAt < LOAD_TOTAL) {
       var i = queueAt++;
       // Already in hand, or already on the wire from the lane above.
-      if (busy[i] || have(slotImage(i))) { continue; }
+      if (busy[i] || (!stale[i] && have(slotImage(i)))) { continue; }
       request(i);
     }
   }
@@ -3094,6 +3137,11 @@
   lock();
   measure();
   resize();
+  // Seed the path mode here rather than on the first resize. tick() only
+  // asks when resize() reports a change, and resize() has just had its one
+  // change, so without this the FIRST crossing would be swallowed by the
+  // seeding and a rotation would do nothing until the second one.
+  checkBitmapMode();
   smoothing();          // resize() only sets it when the size actually changes
   // Before draw(0), which finds images[0] empty and starts the download
   // through refill() — the clock has to be running by then or the unlock
