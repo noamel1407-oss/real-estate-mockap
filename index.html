@@ -362,7 +362,9 @@
      water, and white would wash straight out of it. Warmer than cap-3's
      near-black because what it sits on is warm. */
   .cap-4 {
-    bottom: calc(8.5% + env(safe-area-inset-bottom, 0px));
+    /* --bar is what fitCaps() writes: the part of the layer's foot that is
+       under the browser's toolbar. Zero whenever the toolbar is away. */
+    bottom: calc(8.5% + env(safe-area-inset-bottom, 0px) + var(--bar, 0px));
     left: calc(22px + env(safe-area-inset-left, 0px));
     right: calc(22px + env(safe-area-inset-right, 0px));
     text-align: left;
@@ -1512,7 +1514,7 @@
   /* ---- viewport / scroll metrics ---------------------------------- */
 
   var M = {
-    vh: 1, unit: 1, maxScroll: 1, animEnd: 1,
+    vh: 1, glass: 1, unit: 1, maxScroll: 1, animEnd: 1,
     journeyEnd: 1, descentStart: 1, descentEnd: 1, holdRamp: 1,
     cap4Fade: 1, holdEnd: 1, tailEnd: 1, bitEnd: 1, endHold: 1,
     veilEnd: 1, introOut: 1
@@ -1554,9 +1556,21 @@
     // pixel of drift. A hundredth of a pixel is enough to put the last
     // scroll position the page used to have on the wrong side of this
     // line, and it is the one position where that shows.
-    M.journeyEnd = Math.max(1, Math.round(JOURNEY_VH * unit) - M.vh);
+    //
+    // "The screen" is M.glass and not M.vh. M.vh is window.innerHeight,
+    // and on a phone that is not a fixed number: it grows by the height of
+    // the browser's toolbar the moment the first scroll slides the toolbar
+    // away, and shrinks again when a scroll back up brings it back. Read
+    // against it, journeyEnd moved by one toolbar and animEnd by two each
+    // time, and the picture walked several frames under a thumb that had
+    // not asked for any. M.glass is 100vh read back off the spacer — the
+    // large viewport, which the toolbar does not touch — so the boundaries
+    // are the same numbers whatever the toolbar is doing. On a desktop the
+    // two are the same integer and nothing here changes.
+    M.glass = Math.max(1, Math.round(100 * unit));
+    M.journeyEnd = Math.max(1, Math.round(JOURNEY_VH * unit) - M.glass);
     // Hold the last frame for one full screen at the end of it.
-    M.animEnd = Math.max(1, M.journeyEnd - M.vh);
+    M.animEnd = Math.max(1, M.journeyEnd - M.glass);
 
     // The descent picks up exactly where that hold runs out, and its own
     // hold runs to the foot of the page: journeyEnd + (450 + 80) * unit is
@@ -1615,6 +1629,27 @@
 
   /* ---- canvas sizing ---------------------------------------------- */
 
+  /* The height the picture is fitted to: the large viewport, not the
+     window as it happens to be this instant.
+
+     This used to be window.innerHeight, and that was the jump on the first
+     scroll. A phone opens the page with its toolbar showing; the first
+     scroll slides the toolbar away and innerHeight grows by its height.
+     The canvas was resized to follow, the cover fit was recomputed for a
+     taller screen, and the whole picture grew four per cent and slid down
+     the screen in a single frame — and did the reverse every time a scroll
+     back up brought the toolbar out again.
+
+     Fitted to the large viewport instead, the picture is the same size and
+     in the same place in both states: with the toolbar showing, its foot
+     simply runs on underneath the toolbar. Never smaller than the window,
+     so a browser whose vh is not the large viewport still gets a canvas
+     that covers the glass. */
+  function stageH() {
+    var ih = window.innerHeight || root.clientHeight || 1;
+    return M.glass > ih ? M.glass : ih;
+  }
+
   /* Every frame on the strip is drawn scaled — the sources are 960 or 810
      wide and no phone is either — so the resampler is in the path on every
      single paint, and it is left at the browser's default. `high` asks for
@@ -1631,7 +1666,7 @@
 
   function resize() {
     var vw = window.innerWidth  || root.clientWidth  || 1;
-    var vh = window.innerHeight || root.clientHeight || 1;
+    var vh = stageH();
     // Cap DPR at 2 deliberately, and not because of memory. The frames are
     // 960px wide against 1170 device pixels on a 390pt phone at DPR 3, so a
     // 3x buffer would only stretch the same pixels further: 1.76x instead of
@@ -1645,6 +1680,9 @@
       canvas.height = h;
       canvas.style.width  = vw + 'px';
       canvas.style.height = vh + 'px';
+      // The opening still is the same photograph in the same fit, so it
+      // takes the same box: the handover to the canvas stays invisible.
+      poster.style.height = vh + 'px';
       cw = w; ch = h;
       smoothing();          // the resize above just reset it
       return true;
@@ -1690,12 +1728,19 @@
      Bounded by TOTAL in the worst case, which is a few hundred property
      reads on a frame that would otherwise be blank.
   ------------------------------------------------------------------ */
+  function inHand(i) {
+    var im = images[i];
+    return !!(im && im.complete && im.naturalWidth);
+  }
+
   function paintable(idx, lo, hi) {
-    var im = images[idx], i;
-    if (im && im.complete && im.naturalWidth) { return idx; }
+    var i, cand = -1;
+    if (inHand(idx)) { starved = false; return idx; }
 
     // Wanted now and not here: to the front of the queue, ahead of the
     // sequential walk, and refill the window around it while we are at it.
+    // `starved` is what tells refill() the reader has outrun the download.
+    starved = true;
     refill(idx);
 
     // Bounded to the block the frame belongs to. A tail frame must never
@@ -1703,14 +1748,34 @@
     // fall back onto the tail: those are different rooms, and standing in
     // the wrong one is worse than standing still.
     for (i = idx - 1; i >= lo; i--) {
-      im = images[i];
-      if (im && im.complete && im.naturalWidth) { return i; }
+      if (inHand(i)) { cand = i; break; }
     }
-    for (i = idx + 1; i <= hi; i++) {
-      im = images[i];
-      if (im && im.complete && im.naturalWidth) { return i; }
+    if (cand < 0) {
+      for (i = idx + 1; i <= hi; i++) {
+        if (inHand(i)) { cand = i; break; }
+      }
     }
-    return -1;
+
+    /* And never further from the wanted frame than the picture already is.
+
+       "The nearest frame behind" is only the frame the camera was last
+       standing on while everything behind the playhead is still in memory.
+       On a first visit it is not: a reader who scrolls faster than the
+       frames download is standing on a frame a long way behind the
+       playhead, and the nearest thing behind the playhead that is in
+       memory can be the opening of the journey. That was the page flashing
+       back to the front of the building in the middle of a scroll.
+
+       So the frame on screen is a candidate too, and it wins unless
+       something strictly nearer the wanted frame has arrived. The picture
+       holds, then moves toward where the scroll is, and never away. */
+    var on = drewFrom;
+    if (on >= lo && on <= hi && inHand(on)) {
+      var dOn = on > idx ? on - idx : idx - on;
+      var dCa = cand > idx ? cand - idx : idx - cand;
+      if (cand < 0 || dOn <= dCa) { return on; }
+    }
+    return cand;
   }
 
   /* Returns the index actually painted, or -1 if nothing could be. The
@@ -1888,13 +1953,20 @@
       h = Math.min(vh, r.dh);
     }
 
-    var fit = l + '/' + t + '/' + w + '/' + h;
+    // How much of the layer's foot is under the browser's toolbar right
+    // now. Zero with the toolbar away, and zero on a desktop. Only caption
+    // four reads it: it is the one caption hung off the bottom edge, and
+    // it has to clear the toolbar rather than sit behind it.
+    var bar = Math.max(0, vh - (window.innerHeight || vh));
+
+    var fit = l + '/' + t + '/' + w + '/' + h + '/' + bar;
     if (fit === capsFit) { return; }
     capsFit = fit;
     caps.style.left   = l + 'px';
     caps.style.top    = t + 'px';
     caps.style.width  = w + 'px';
     caps.style.height = h + 'px';
+    caps.style.setProperty('--bar', bar + 'px');
     caps.style.setProperty('--capw', w + 'px');
     caps.style.setProperty('--caph', h + 'px');
   }
@@ -1939,7 +2011,9 @@
   // Each early-outs unless the rectangle actually moved.
   function layout() {
     var vw = window.innerWidth  || root.clientWidth  || 1;
-    var vh = window.innerHeight || root.clientHeight || 1;
+    // The same height the canvas is fitted to, so the mark and the
+    // captions stay where the picture is and do not move with the toolbar.
+    var vh = stageH();
     var r  = frameRect(vw, vh);
     fitLogo(r);
     fitCaps(vw, vh, r);
@@ -2241,11 +2315,23 @@
     sweepT = now; sweepIdx = idx;
 
     var lo = idx - KEEP_BACK, hi = idx + KEEP_AHEAD;
+    /* A second window, around the frame that is actually on screen.
+
+       idx is where the scroll says the reader is. On a first visit that
+       can be a long way ahead of the frame being shown, because the frame
+       it asks for has not downloaded yet and the picture is holding on an
+       earlier one. A window centred on idx alone then throws away the very
+       frames the picture is standing on — measured on a 20Mbps first visit,
+       the picture flashed back to frames1/016 more than two dozen times in
+       twelve seconds of scrolling. Once the wanted frame is in hand the two
+       windows are the same window and this costs nothing. */
+    var on = drewFrom, lo2 = on - KEEP_BACK, hi2 = on + KEEP_AHEAD;
     for (var i = 0; i <= LAST_SLOT; i++) {
       // The strip and the closing bit's two stills are variables rather
       // than entries here, which is exactly what pins them.
       if (i === TOTAL || i === TERR_SLOT || i === JAMB_SLOT) { continue; }
       if (i >= lo && i <= hi) { continue; }
+      if (on >= 0 && i >= lo2 && i <= hi2) { continue; }
       if (pinnedFrame(i)) { continue; }
       // A request already on the wire owns its Image; dropping the only
       // reference to it mid-flight buys nothing and loses the download.
@@ -2311,6 +2397,23 @@
 
   var lastIdx = -1, lastYOff = -1, lastW = -1, lastH = -1, hintHidden = false;
 
+  // Which way the reader is travelling, +1 down the page and -1 back up,
+  // and whether the frame the scroll is asking for is still on the wire.
+  // The loader's priority lane reads both; see refill().
+  var travel = 1, lastY = 0, starved = false;
+
+  // Two rates, both in frames a second and both smoothed: how fast the
+  // playhead is moving through the slots, and how fast the connection is
+  // delivering them. Their ratio is how many frames the reader passes for
+  // each one that arrives, which is the only thing refill() needs to know
+  // to decide how coarse a grid to ask for.
+  var speed = 0, speedT = 0, speedSlot = 0;
+  var rate = 0;
+
+  function clock() {
+    return (window.performance && performance.now) ? performance.now() : Date.now();
+  }
+
   // The frame the canvas is actually showing, which is lastIdx unless the
   // loader had not reached it and paintable() had to fall back, and whether
   // the descent strip is the thing currently up. Both exist so a picture
@@ -2337,6 +2440,8 @@
     layout();
 
     var y = clamp(scrollTop(), 0, M.maxScroll);
+    if (y > lastY) { travel = 1; } else if (y < lastY) { travel = -1; }
+    lastY = y;
     targetP = clamp(y / M.animEnd, 0, 1);
 
     var gap = targetP - shownP;
@@ -2422,8 +2527,14 @@
     // second, or ten frames of travel, whichever comes first — so this is
     // a few hundred property reads a handful of times a second and not a
     // sweep on every paint.
-    evict(slot, (window.performance && performance.now) ? performance.now()
-                                                        : Date.now());
+    var now = clock();
+    if (speedT && now > speedT) {
+      var moved = slot > speedSlot ? slot - speedSlot : speedSlot - slot;
+      speed += (moved * 1000 / (now - speedT) - speed) * 0.12;
+    }
+    speedT = now; speedSlot = slot;
+
+    evict(slot, now);
 
     // Off the raw scroll, not off the eased playhead: shownP is a
     // function of how you got here, y is a function of where you are.
@@ -2585,6 +2696,7 @@
      that is still downloading into. */
   var urgent = [];
   var busy   = [];
+  var reqT   = [];     // when each request went out, for the rate above
   var URGENT_CAP = 24;
 
   // The slot space in one function: the journey, then the strip, then the
@@ -2625,18 +2737,69 @@
   // had to settle for a neighbour — and capped, because a reader who flicks
   // across the whole page would otherwise queue hundreds of frames that the
   // window will have moved past by the time they arrive.
+  //
+  // Rebuilt from nothing on every call, because the lane is for where the
+  // reader is now. It used to be appended to and never cleared, so a reader
+  // on the move left a trail of requests for frames already scrolled past,
+  // and those were served first — ahead of the frame actually wanted.
+  //
+  // And in the direction of travel. It used to alternate one ahead, one
+  // behind, which spent half of every batch on frames behind a reader who
+  // was walking away from them.
+  //
+  // When the reader has outrun the download — `starved`, and the playhead
+  // moving through more frames a second than the connection delivers — the
+  // stretch ahead is requested coarse to fine: every eighth, fourth or
+  // second frame, as coarse as the two rates say it has to be and no
+  // coarser, then the frames between. The connection cannot deliver every
+  // frame at the speed of that thumb, and the choice is what to do with
+  // what it can deliver: in strip order it arrives behind the playhead and
+  // the picture freezes and then leaps; on a grid ahead of it the picture
+  // stays where the scroll is at a lower frame rate, the way a video drops
+  // frames instead of stopping. The gaps fill in the moment the thumb
+  // slows, nearest first. A reader the connection can keep up with never
+  // sees any of this — for them it is the frames ahead, in order — and
+  // neither does the locked page: the opening frames are a gate.
   function refill(idx) {
-    var added = false;
-    for (var k = 0; k <= KEEP_AHEAD && urgent.length < URGENT_CAP; k++) {
-      if (want(idx + k)) { added = true; }
-      if (k > 0 && k <= KEEP_BACK && urgent.length < URGENT_CAP) {
-        if (want(idx - k)) { added = true; }
+    var k, i, step = 1;
+    var ahead = travel > 0 ? KEEP_AHEAD : KEEP_BACK;
+    var back  = travel > 0 ? KEEP_BACK  : KEEP_AHEAD;
+
+    if (ready && starved && rate > 0 && speed > rate) {
+      // Frames passed for each frame delivered, rounded up to a power of
+      // two so the grid is the same grid from one call to the next.
+      var need = speed / rate;
+      step = need > 4 ? 8 : (need > 2 ? 4 : 2);
+    }
+
+    urgent.length = 0;
+    // The wanted frame itself always leads. On the move it lands a little
+    // behind the playhead, and that is still worth having: it is what keeps
+    // the picture following while the grid ahead is being laid.
+    want(idx);
+    for (; step >= 1; step >>= 1) {
+      for (k = 1; k <= ahead && urgent.length < URGENT_CAP; k++) {
+        i = idx + travel * k;
+        if (i % step === 0) { want(i); }
       }
     }
-    if (added) { pump(); }
+    for (k = 1; k <= back && urgent.length < URGENT_CAP; k++) {
+      want(idx - travel * k);
+    }
+    if (urgent.length) { pump(); }
   }
 
   function slotDone(i) {
+    // How fast frames are arriving: this request's duration, and the
+    // throughput that implies with inFlight of them sharing the wire.
+    if (reqT[i]) {
+      var T = clock() - reqT[i];
+      if (T > 0) {
+        var per = inFlight * 1000 / T;
+        rate = rate ? rate + (per - rate) * 0.25 : per;
+      }
+      reqT[i] = 0;
+    }
     inFlight--;
     busy[i] = false;
 
@@ -2671,6 +2834,7 @@
     img.onload  = (function (k) { return function () { slotDone(k); }; })(i);
     img.onerror = (function (k) { return function () { slotDone(k); }; })(i);
     inFlight++;
+    reqT[i] = clock();
     img.src = slotUrl(i);
   }
 
@@ -2679,7 +2843,12 @@
     // or about to reach, and they are the difference between a stutter and
     // a hold. shift() rather than a scan, so a flood cannot starve them.
     while (inFlight < MAX_PARALLEL && urgent.length) {
-      request(urgent.shift());
+      var u = urgent.shift(), uim = slotImage(u);
+      // It may have landed, or gone out on the sequential walk, since it
+      // was queued. Asking for a frame that is already in hand restarts
+      // its load, and for that moment it is not paintable.
+      if (busy[u] || (uim && uim.complete && uim.naturalWidth)) { continue; }
+      request(u);
     }
     while (inFlight < MAX_PARALLEL && queueAt < LOAD_TOTAL) {
       var i = queueAt++;
