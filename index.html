@@ -70,11 +70,10 @@
     color: #fff;
   }
 
-  /* Scroll is locked until every frame, and the descent strip, are in
-     memory. */
+  /* Scroll is locked until the start of the film is in and on screen. */
   html.is-loading, html.is-loading body { overflow: hidden; height: 100%; touch-action: none; }
 
-  /* The single canvas. Everything is painted here with drawImage. */
+  /* The single canvas. Every picture is a frame of the film, drawn here. */
   #stage {
     position: fixed;
     top: 0; left: 0;
@@ -1331,180 +1330,11 @@
   }
 
   /* ------------------------------------------------------------------
-     How the picture moves from each frame to the next.
-
-     Two neighbouring frames are two stills of one camera move, and to a
-     very good first approximation what separates them is a push and a
-     slide: the second is the first scaled by s and shifted by (x, y).
-     These three tables are that, for every step on the strip — measured,
-     by fitting a scale and a shift to the optical flow between the two
-     frames as drawn. Scale is stored as (s - 1) x 10000, the shift as a
-     ten-thousandth of the frame's width and height.
-
-     They are what lets the picture be somewhere between two frames. Part
-     of the way from frame 12 to frame 13, frame 12 is drawn carried that
-     part of the way along its move and frame 13 carried back by the
-     rest, and the two land on top of each other. See drawAt().
-
-     A row of zeros is a step the fit could not improve on — a cut
-     between two clips, the blur of the whip over the parapet, a room so
-     still there is nothing to fit — and there the two frames are simply
-     dissolved in place.
+     How far cover may crop before the frame is letterboxed instead.
+     1.0 = never crop, Infinity = always fill. iPhone measures ~1.04 here,
+     so phones always take the cover path.
   ------------------------------------------------------------------ */
-  var MOVE_S = [
-    0,0,0,87,117,79,109,61,92,86,58,88,53,78,57,94,52,91,86,48,82,50,55,59,76,48,74,54,
-    61,74,50,53,43,80,48,56,58,74,75,53,76,33,76,54,54,54,71,20,61,44,66,43,62,45,63,42,
-    64,64,43,65,44,64,45,68,44,67,68,45,67,46,68,45,70,47,68,50,71,69,51,72,49,75,50,75,
-    51,77,522,477,487,445,460,419,432,395,405,-4,14,7,16,23,43,39,73,73,79,82,108,126,132,160,259,188,
-    209,246,269,296,332,347,385,398,431,497,508,263,265,269,277,314,332,334,325,323,340,375,382,397,423,444,446,427,
-    486,486,531,573,561,556,538,459,429,408,389,464,547,912,0,0,0,0,554,319,289,283,323,330,335,0,0,0,
-    0,0,150,141,118,113,177,178,161,153,129,102,69,92,101,99,100,108,175,112,185,128,203,224,228,154,246,253,
-    264,187,278,188,188,195,291,199,202,195,199,198,206,190,197,197,195,189,201,200,288,188,298,205,192,294,187,262,
-    247,228,269,238,540,307,312,336,354,350,336,376,373,366,356,354,383,346,305,331,307,321,283,292,350,295,304,321,
-    271,295,295,286,331,296,269,299,309,335,289,346,294,312,306,353,0,86,56,82,47,0,51,0,51,79,0,51,
-    0,53,0,53,0,49,0,0,0,0,59,0,56,0,0,0,60,0,0,62,0,57,0,60,0,56,0,120,
-    90,114,87,115,93,111,90,126,0,51,46,38,46,39,42,36,42,29,32,32,41,26,38,28,31,27,32,28,
-    29,24,29,28,31,29,31,25,29,27,34,25,0,0,29,24,0,0,24,22,25,0,26,17,18,17,28,18,
-    0,16,17,16,17,14,18,17,13,0,10,15,11,0,0,45,47,59,39,38,41,28,0,32,0,29,9,22,
-    24,24,0,15,22,0,10,13,14,6,0,0,10,6,0,0,0,2,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0
-  ];
-  var MOVE_X = [
-    0,0,0,-28,-38,-24,-37,-15,-24,-25,-17,-24,-13,-20,-16,-28,-15,-23,-24,-10,-18,-14,-8,-15,-15,-9,-14,-13,
-    -11,-16,-9,-9,-6,-19,-8,-8,-14,-17,-14,-13,-16,-3,-17,-12,-5,-14,-17,-4,-27,-20,-29,-20,-28,-20,-27,-19,
-    -29,-29,-20,-30,-20,-29,-20,-30,-20,-30,-30,-20,-29,-21,-30,-20,-31,-22,-30,-23,-32,-29,-23,-32,-22,-32,-22,-33,
-    -23,-34,-132,-117,-126,-112,-123,-108,-118,-104,-113,13,-14,-13,-19,-24,-41,-39,-57,-59,-63,-71,-78,-94,-83,-113,-179,-128,
-    -147,-170,-185,-200,-216,-228,-253,-260,-276,-321,-326,-167,-168,-171,-177,-204,-215,-216,-208,-207,-226,-248,-247,-250,-255,-268,-265,-259,
-    -293,-290,-306,-328,-328,-315,-304,-258,-243,-239,-205,-283,-354,-420,0,0,0,0,-345,-175,-161,-158,-176,-185,-187,0,0,0,
-    0,0,-93,-83,-71,-65,-97,-102,-92,-90,-71,-61,-40,-48,-53,-47,-40,-38,-60,-32,-49,-34,-55,-56,-55,-34,-47,-50,
-    -48,-36,-50,-34,-29,-31,-42,-23,-25,-23,-23,-14,-20,-12,-18,-10,-11,-7,-18,-13,-13,-12,-21,-23,-16,-41,-26,-45,
-    -53,-50,-60,-59,-154,-97,-93,-107,-120,-115,-96,-126,-120,-112,-97,-91,-117,-85,-45,-68,-53,-65,-15,-16,-58,-5,-19,-47,
-    -12,-11,-46,-45,-80,-55,-53,-78,-67,-95,-80,-105,-71,-73,-69,-91,0,-13,-7,-12,-4,0,-7,0,-8,-15,0,-7,
-    0,-8,0,-7,0,-6,0,0,0,0,-8,0,-9,0,0,0,-12,0,0,-12,0,-10,0,-10,0,-9,0,-79,
-    -71,-75,-71,-75,-72,-72,-69,-75,0,-21,-19,-15,-20,-14,-15,-19,-14,-9,-15,-12,-16,-12,-18,-9,-9,-13,-18,-10,
-    -12,-9,-7,-10,-12,-12,-14,-7,-10,-17,-12,-10,0,0,-12,-14,0,0,-12,-11,-12,0,-13,-10,-9,-9,-13,-10,
-    0,-7,-13,-9,-9,-12,-12,-11,-12,0,-10,-11,-12,0,0,-20,-15,-20,-17,-16,-11,-7,0,-8,0,-16,-18,-18,
-    -15,-17,0,-18,-17,0,-18,-14,-16,-13,0,0,-13,-13,0,0,0,-11,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0
-  ];
-  var MOVE_Y = [
-    0,0,0,-20,-25,-22,-30,-11,-24,-19,-12,-24,-11,-16,-16,-29,-10,-30,-26,-10,-26,-10,-3,-20,-21,-12,-22,-17,
-    -12,-22,-14,-7,-9,-26,-14,-6,-20,-20,-21,-17,-22,0,-24,-17,-6,-17,-19,-5,-20,-15,-21,-14,-20,-15,-20,-13,
-    -21,-21,-14,-22,-15,-21,-16,-22,-14,-22,-22,-15,-22,-14,-22,-15,-22,-16,-22,-16,-23,-21,-16,-23,-15,-24,-16,-24,
-    -16,-24,-29,-21,-30,-22,-34,-24,-35,-26,-33,9,0,9,4,6,-5,4,-16,-9,-9,-3,-20,-23,-25,-34,-55,-37,
-    -44,-64,-74,-79,-93,-92,-111,-105,-112,-142,-132,-72,-66,-70,-68,-80,-83,-81,-79,-74,-64,-82,-88,-93,-97,-103,-107,-95,
-    -103,-105,-123,-140,-138,-124,-128,-101,-97,-94,-90,-94,-100,-191,0,0,0,0,-159,-99,-94,-92,-102,-104,-105,0,0,0,
-    0,0,-58,-57,-48,-46,-75,-75,-66,-62,-52,-40,-26,-32,-36,-38,-38,-41,-68,-43,-70,-50,-76,-85,-88,-59,-95,-100,
-    -104,-75,-112,-75,-74,-77,-119,-79,-81,-80,-83,-82,-89,-81,-86,-83,-86,-82,-90,-87,-127,-84,-128,-88,-84,-127,-80,-115,
-    -107,-98,-118,-103,-204,-105,-104,-114,-123,-121,-119,-133,-135,-134,-132,-132,-145,-129,-115,-120,-109,-117,-98,-106,-136,-102,-103,-112,
-    -84,-106,-99,-99,-132,-109,-86,-104,-107,-132,-101,-138,-112,-124,-126,-150,0,-39,-25,-34,-17,0,-20,0,-20,-31,0,-20,
-    0,-20,0,-21,0,-17,0,0,0,0,-23,0,-21,0,0,0,-23,0,0,-24,0,-21,0,-21,0,-20,0,-69,
-    -57,-67,-54,-65,-58,-62,-56,-74,0,-19,-17,-11,-16,-13,-15,-10,-14,-8,-11,-9,-14,-8,-15,-8,-10,-7,-11,-9,
-    -9,-5,-9,-10,-11,-6,-11,-9,-9,-8,-10,-8,0,0,-8,-7,0,0,-9,-5,-7,0,-7,-4,-5,-4,-9,-7,
-    0,-4,-6,-6,-5,-3,-6,-5,-4,0,-3,-7,-4,0,0,-22,-20,-26,-17,-15,-18,-10,0,-11,0,-12,-2,-11,
-    -10,-13,0,-7,-12,0,-4,-8,-8,-3,0,0,-6,-3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0
-  ];
-
-  /* ------------------------------------------------------------------
-     clip2 -> clip3 seam.
-     clip3 opens on a 1.4x magnified framing of clip2's final frame, so
-     the tail of frames2 pushes in to meet it. The push is applied at
-     draw time only — the JPGs themselves are untouched.
-
-     ZOOM_MAX and the anchor were measured, not guessed: clip3's opening
-     frame was fitted against clip2's closing frame over (zoom, anchor)
-     using the sky/roofline silhouette, which — unlike the facade, whose
-     near-identical balcony rows produce false matches an octave apart —
-     has no repeating structure. Best fit is 0.986 correlation.
-
-     The 1.4x magnification came back exact. The anchor landed at
-     0.220 / 0.010 rather than the 0.42 / 0.36 originally specified:
-     clip3 opens on the crown of the building, so the push-in pulls
-     toward the top edge of the frame. Those two numbers are the whole
-     seam — change them and the cut stops being invisible.
-  ------------------------------------------------------------------ */
-  var ZOOM_FROM  = 39;      // 1-based frame inside frames2, zoom = 1.0
-  var ZOOM_TO    = 48;      // 1-based frame inside frames2, zoom = ZOOM_MAX
-  var ZOOM_MAX   = 1.4;
-  var ANCHOR_X   = 0.220;   // fraction of frame width
-  var ANCHOR_Y   = 0.010;   // fraction of frame height
-
-  /* ------------------------------------------------------------------
-     frames5 -> frames9 seam.
-     Same mechanism as above, second instance of it. clip6 opens a short
-     step further into the room than frames5 closes, so the tail of
-     frames5 travels to meet it.
-
-     The gap is small and mostly sideways rather than forward, which makes
-     it a different shape from the clip2 -> clip3 push. Measured on the
-     rendered phone viewport rather than on the whole JPG: fitting over
-     the full frame reports about 6% because it weights the left and right
-     margins that cover() crops away on a phone, and those margins are the
-     worst-matching part. Against what the phone actually shows the answer
-     is 3.4% of scale and a horizontal shift of 3.9% of frame width — a
-     couple of degrees of pan, which is the gap as described.
-
-     S5_ANCHOR_X above 1 is not a typo. A 3% zoom carries almost no
-     translation with it, so shifting the frame by 3.9% of its width means
-     scaling about a point off the right edge. The anchor is the fixed
-     point of the scaling, not a point of interest, and it is allowed to
-     sit outside the frame.
-
-     This is a softer win than the first seam: 18.9 down to 14.6 on the
-     usual 32x57 metric, where clip2 -> clip3 reaches about 2. The ceiling
-     is parallax again — clip6 is a separately generated shot, so near and
-     far move at their own rates and no global 2D transform reconciles
-     them.
-  ------------------------------------------------------------------ */
-  var S5_FROM     = 39;      // 1-based frame inside frames5, zoom = 1.0
-  var S5_TO       = 48;      // 1-based frame inside frames5, zoom = S5_ZOOM_MAX
-  var S5_ZOOM_MAX = 1.034;
-  var S5_ANCHOR_X = 1.671;   // fraction of frame width, deliberately off-frame
-  var S5_ANCHOR_Y = 1.047;   // fraction of frame height, deliberately off-frame
-
-  // How far cover may crop before the frame is letterboxed instead.
-  // 1.0 = never crop, Infinity = always fill. iPhone measures ~1.04 here,
-  // so phones always take the cover path.
   var MAX_CROP = 1.3;
-
-  function zoomFor(idx) {
-    var local = idx - CLIP1_COUNT + 1;              // 1-based inside frames2
-    if (local < ZOOM_FROM || local > ZOOM_TO) { return 1; }
-    var t = (local - ZOOM_FROM) / (ZOOM_TO - ZOOM_FROM);
-    return 1 + (ZOOM_MAX - 1) * t;
-  }
-
-  function zoomFor5(idx) {
-    var local = idx - CLIP5_START + 1;              // 1-based inside frames5
-    if (local < S5_FROM || local > S5_TO) { return 1; }
-    var t = (local - S5_FROM) / (S5_TO - S5_FROM);
-    return 1 + (S5_ZOOM_MAX - 1) * t;
-  }
-
-  /* ------------------------------------------------------------------
-     The descent.
-     One continuous 810x4076 photograph, not a sequence. The scroll moves
-     an 810x1437 window — the frames' own rectangle — down it, from the
-     top of the strip to the bottom, and that window is placed on the
-     canvas by exactly the arithmetic a frame gets, so nothing about the
-     fit changes underfoot at the handover.
-
-     The window's travel is the whole of it: 4076 - 1437 = 2639, and the
-     block gets an eased division of its 300vh — slow in, quick through
-     the middle, braking into the hold — rather than a pacing map. The
-     strip is one photograph panned at a constant rate, so there are no
-     steps between stills here for a map to even out.
-
-     It is read off the same followed scroll position as everything else
-     on the page, so the descent has the same weight under the thumb as
-     the frames either side of it.
-  ------------------------------------------------------------------ */
-  var STRIP_SRC    = 'descent_strip.jpg';
-  var STRIP_W      = 810;                     // the file is 810 x 4076
-  var STRIP_H      = 4076;
-  var STRIP_WIN    = 1437;                    // one frame's height, exactly
-  var STRIP_TRAVEL = STRIP_H - STRIP_WIN;     // 2639, top of strip to bottom
 
   /* ------------------------------------------------------------------
      Scroll geometry, in absolute distance rather than in fractions.
@@ -1560,59 +1390,6 @@
   var INTRO_AT     = 0.60;    // of the crossing, where the sentence comes up
   var INTRO_OUT_VH = 35;      // and the scroll past it over which it goes
 
-  /* ------------------------------------------------------------------
-     The tail's pacing, and its motion.
-     Same machine as the strip above and for the same reason: TSTEP is
-     the scroll each step between neighbouring tail frames takes, built
-     the way STEP is and at the journey's own two rates, so a second of
-     footage and a screen-width of travel cost the same scroll down here
-     as they do up there.
-
-     The two folders used to be handed 165vh each whatever was in them.
-     They are not alike: frames11 drifts forward a third of a frame-width
-     in all, frames12 goes out through the door and covers more than a
-     whole one. On equal scroll the walk outside ran at better than twice
-     the pace of anything before it. Paced as one run they come out at
-     roughly 115 and 215.
-  ------------------------------------------------------------------ */
-  var TSTEP = [
-    25.3,16,23.2,16.3,23.3,16,23.1,16.4,23.2,24.5,16,23.4,15.8,24.1,16.4,24.3,16.1,24.2,24.6,16.9,
-    24.9,16.2,24,15.9,24.3,15.9,24.7,16,24,24.2,16,23.9,16.2,24.4,15.9,24.3,16.1,24.3,24.4,16.4,
-    24,15.8,25,16.5,25.4,17.3,24.3,7,30.1,20.6,33.6,23.7,37.4,25.1,38.6,23.8,39.4,44.7,29.7,46,
-    34,46,36.1,46,37.3,46,46,43.2,46,40.1,46,36.9,46,35.4,46,37.2,46,46,46,46,
-    44.5,46,45.3,46,35.7,46,45.7,30.4,46,30.7,43.4,26.6,36.5,24.5,31.7
-  ];
-
-  // Where each tail frame sits, as a fraction of the tail's own run.
-  var TKNOT = (function () {
-    var i, n = TSTEP.length, sum = 0, acc = 0, c = new Array(n + 1);
-    for (i = 0; i < n; i++) { sum += TSTEP[i]; }
-    c[0] = 0;
-    for (i = 0; i < n; i++) { acc += TSTEP[i]; c[i + 1] = acc / sum; }
-    c[n] = 1;
-    return c;
-  })();
-
-  // The tail's own three tables; see MOVE_S for what they are.
-  var TMOVE_S = [
-    120,52,108,50,102,73,104,57,101,113,74,114,72,114,82,114,79,119,123,84,137,88,119,81,122,83,128,86,
-    123,131,89,122,88,130,88,126,93,131,131,96,128,87,141,94,150,113,142,35,231,168,256,199,323,224,344,191,
-    332,407,268,457,326,495,339,493,343,581,538,377,576,363,565,329,459,287,450,309,462,514,344,552,358,521,342,482,
-    301,433,396,246,319,191,294,183,252,171,211
-  ];
-  var TMOVE_X = [
-    -134,-64,-115,-68,-112,-81,-119,-75,-116,-128,-83,-124,-81,-130,-90,-133,-86,-134,-137,-93,-142,-90,-132,-86,-133,-86,-139,-86,
-    -133,-136,-88,-133,-90,-136,-86,-133,-89,-133,-133,-90,-127,-86,-137,-90,-142,-98,-130,-37,-177,-127,-194,-145,-235,-163,-254,-152,
-    -261,-304,-201,-334,-239,-362,-252,-374,-254,-444,-445,-302,-485,-294,-467,-253,-363,-234,-370,-249,-403,-440,-302,-451,-293,-434,-285,-390,
-    -235,-342,-301,-191,-260,-164,-241,-144,-204,-131,-155
-  ];
-  var TMOVE_Y = [
-    -40,-9,-34,-11,-33,-24,-35,-17,-34,-40,-25,-40,-22,-38,-29,-40,-28,-46,-45,-29,-53,-31,-45,-30,-43,-31,-50,-31,
-    -46,-50,-34,-47,-34,-52,-33,-48,-36,-50,-50,-39,-48,-31,-59,-38,-64,-51,-59,-14,-98,-67,-105,-81,-129,-91,-141,-83,
-    -140,-162,-105,-176,-126,-184,-129,-184,-127,-221,-207,-143,-230,-146,-217,-132,-186,-117,-192,-125,-190,-206,-130,-225,-140,-209,-136,-202,
-    -131,-186,-171,-106,-140,-76,-133,-79,-108,-83,-95
-  ];
-
   /* ------------------------------------------------------------------ */
 
   var canvas = document.getElementById('stage');
@@ -1635,18 +1412,6 @@
     CAPTIONS[cn].shown = -1;    // last opacity written, so we write once per change
   }
 
-  /* What is in hand.
-
-     bmp[i] is slot i ready to draw: an ImageBitmap — decoded, owned by
-     this page, freed by hand — or, where the browser cannot make one, an
-     <img> that has been decoded. bw[i] x bh[i] is its size. got[i] says
-     the bytes have arrived; they are kept in the loader, so a slot that
-     is not in hand can be made again without the network. See the
-     loader at the foot of the script for why it is built this way. */
-  var bmp = new Array(LAST_SLOT + 1);
-  var bw  = new Array(LAST_SLOT + 1);
-  var bh  = new Array(LAST_SLOT + 1);
-  var got = new Array(LAST_SLOT + 1);
   var ready  = false;
   var cw = 0, ch = 0;
 
@@ -1803,26 +1568,6 @@
   function smoothing() {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    quality = 'high';
-  }
-
-  /* `high` is for a picture that is being looked at. One that is on its
-     way to being another picture does not need it and should not pay for
-     it: on the move the canvas is repainted on every tick, with two or
-     three frames laid over each other, and a multi-tap filter on each of
-     those is exactly the cost that turns a glide into a stutter on a
-     phone. So the move is drawn with the plain filter, and the moment the
-     picture comes to rest it is drawn once more with the good one. The
-     frames land at 0.8x to 1x, where the two differ by an edge and not by
-     a picture, and nothing is ever left standing in the cheap one. */
-  var quality = '';
-
-  function sharp(on) {
-    var q = on ? 'high' : 'low';
-    if (q === quality) { return; }
-    quality = q;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = q;
   }
 
   function resize() {
@@ -1872,443 +1617,409 @@
     return { dx: (cw - dw) / 2, dy: (ch - dh) / 2, dw: dw, dh: dh };
   }
 
-  /* ---- what is actually paintable right now --------------------------
-     The playhead can reach a frame that is not in hand: its bytes still
-     on the wire on a first visit, or its bitmap not yet made because the
-     reader has just turned round or thrown the page. The answer is never
-     a black screen, and it is never a step back either. See have().
-  ------------------------------------------------------------------ */
-  /* ---- the light copy -------------------------------------------------
-     Every frame on the page a second time: 352 pixels wide, nine to a
-     sheet, 59 sheets of WebP, 9.5MB against the 80MB the frames weigh.
-     In the order the page plays them — the strip, then the tail.
-
-     The first 24 sheets — the facade to the terrace — are downloaded
-     before the page unlocks, with the first sixteen frames, and the rest
-     come straight after, so that from the first scroll every position on
-     the page has a picture: a reader on a first visit who scrolls ahead of the frames
-     sees the camera keep moving, a little soft, and each frame dissolves
-     into focus as it lands. A reader on a second visit never sees it.
-
-     It is never drawn in place of a frame that is in hand, and it is not
-     drawn in place of one whose bytes are here but whose bitmap is not
-     yet made — that is a wait of a few milliseconds, and the nearest
-     frame in hand covers it without a change of quality.
-  ------------------------------------------------------------------ */
-  var LITE_W = 352, LITE_H = 624;      // one cell
-  var LITE_COLS = 3, LITE_PER = 9;     // cells across, and to a sheet
-  var LITE_COUNT = Math.ceil((TOTAL + TAIL_TOTAL) / LITE_PER);   // 59
-  var liteBmp = new Array(LITE_COUNT);
-  var liteGot = new Array(LITE_COUNT);
-
-  // The shape every frame on the page is. A frame that is not in hand is
-  // fitted as this, so its stand-in lands on the rectangle it will.
-  var FRAME_W = 960, FRAME_H = 1703;
-
-  // Which cell a slot is, or -1 for the three slots that are not frames:
-  // the journey's frames are cells 0..TOTAL-1 and the tail's follow them.
-  function cellOf(slot) {
-    if (slot < TOTAL) { return slot; }
-    if (slot >= TAIL_BASE && slot <= TAIL_LAST) { return slot - 1; }
-    return -1;
-  }
-
-  function sheetOf(slot) {
-    var c = cellOf(slot);
-    return c < 0 ? null : (liteBmp[(c / LITE_PER) | 0] || null);
-  }
-
-  /* The light copy stands in while a frame's bytes are on the wire, and
-     — so that the picture never trades one quality for another and back
-     within a few frames — for a short while after, until the frame's own
-     bitmap is made. SHOWN_MS is that while. */
-  var SHOWN_MS = 400;
-  var liteShown = new Array(LAST_SLOT + 1);
-
-  // 2 for the frame itself, 1 for its cell on a sheet, 0 for neither.
-  function have(slot) {
-    if (bmp[slot]) { return 2; }
-    if (!sheetOf(slot)) { return 0; }
-    if (!got[slot]) { return 1; }
-    return (liteShown[slot] && tickNow - liteShown[slot] < SHOWN_MS) ? 1 : 0;
-  }
-
-  /* ---- the reveal -----------------------------------------------------
-     A frame that lands while its stand-in is on screen is not swapped in;
-     it is dissolved in over REVEAL_MS, the stand-in under it the whole
-     way. A swap is a jump in quality the eye catches every time; a
-     dissolve reads as the picture coming into focus. reveal[i] is the
-     moment slot i started doing that, and `revealing` is what put() says
-     when one is still going, so the loop keeps painting until it is done.
-  ------------------------------------------------------------------ */
-  var REVEAL_MS = 320;
-  var reveal = new Array(LAST_SLOT + 1);
-  var revealing = false;
-  var tickNow = 0;
-
-  function liteCell(slot, x, y, w, h) {
-    var sh = sheetOf(slot);
-    if (!sh) { return false; }
-    var c = cellOf(slot) % LITE_PER;
-    // The source rectangle is pulled in half a pixel all round, so the
-    // filter cannot reach into the neighbouring cell and draw a hairline
-    // of another frame down the edge of this one.
-    ctx.drawImage(sh, (c % LITE_COLS) * LITE_W + 0.5,
-                      ((c / LITE_COLS) | 0) * LITE_H + 0.5,
-                      LITE_W - 1, LITE_H - 1, x, y, w, h);
-    return true;
-  }
-
-  /* One frame onto the canvas at x, y, w, h, at `alpha`, from the best
-     source there is. Returns what have() would: which of the two it was
-     drawn from. */
-  function put(slot, x, y, w, h, alpha) {
-    var b = bmp[slot];
-    if (b) {
-      if (reveal[slot]) {
-        var r = (tickNow - reveal[slot]) / REVEAL_MS;
-        if (r < 1 && r >= 0) {
-          ctx.globalAlpha = alpha;
-          if (liteCell(slot, x, y, w, h)) {
-            revealing = true;
-            ctx.globalAlpha = alpha * r * r * (3 - 2 * r);
-            ctx.drawImage(b, x, y, w, h);
-            return 2;
-          }
-        }
-        reveal[slot] = 0;
-      }
-      ctx.globalAlpha = alpha;
-      ctx.drawImage(b, x, y, w, h);
-      return 2;
-    }
-    ctx.globalAlpha = alpha;
-    if (liteCell(slot, x, y, w, h)) { liteShown[slot] = tickNow; return 1; }
-    return 0;
-  }
-
-  /* The nearest frame in hand to idx inside [lo, hi] — behind it first,
-     which is the frame the camera was last standing on, and ahead only
-     if there is nothing behind at all. Bounded to the block the frame
-     belongs to: a tail frame must never fall back onto the end of the
-     journey and a journey frame must never fall back onto the tail —
-     those are different rooms, and standing in the wrong one is worse
-     than standing still.
-
-     And never further from the wanted frame than the picture already is:
-     the frame on screen is a candidate too, and it wins unless something
-     strictly nearer has arrived. The picture holds, then moves toward
-     where the scroll is, and never away. */
-  function paintable(idx, lo, hi) {
-    var i, cand = -1;
-    for (i = idx - 1; i >= lo; i--) {
-      if (bmp[i]) { cand = i; break; }
-    }
-    if (cand < 0) {
-      for (i = idx + 1; i <= hi; i++) {
-        if (bmp[i]) { cand = i; break; }
-      }
-    }
-    var on = drewFrom;
-    if (on >= lo && on <= hi && bmp[on]) {
-      var dOn = on > idx ? on - idx : idx - on;
-      var dCa = cand > idx ? cand - idx : idx - cand;
-      if (cand < 0 || dOn <= dCa) { return on; }
-    }
-    return cand;
-  }
-
-  /* ---- where one frame goes ------------------------------------------
-     Two seams, both of them on the journey, and the ramps never overlap,
-     so the first one wins. Neither reaches the tail: frames11 opens on
-     the room the descent's foot is already standing in and frames12 on
-     the frame frames11 closes with, so there is no cut to hide at
-     either. Both measure inside 4 on the 32x57 metric the two seams
-     above were calibrated against, where an invisible cut is about 1
-     and a visible one is 20.
-
-     Written as a scale and an offset in units of the frame's own
-     rectangle rather than as pixels, because that is the form the step
-     tables are in and the two have to be composed: a frame with a seam
-     push-in on it, carried part of the way to its neighbour, is one
-     scale and one offset and still a single drawImage.
-  ------------------------------------------------------------------ */
-  var seamZ = 1, seamX = 0, seamY = 0;
-
-  function seam(idx) {
-    seamZ = 1; seamX = 0; seamY = 0;
-    if (idx >= TAIL_BASE) { return; }
-    var ax = ANCHOR_X, ay = ANCHOR_Y;
-    var z = zoomFor(idx);
-    if (z === 1) {
-      z = zoomFor5(idx);
-      ax = S5_ANCHOR_X; ay = S5_ANCHOR_Y;
-    }
-    if (z !== 1) {
-      // Scale about the anchor so that point stays put on screen.
-      seamZ = z; seamX = ax * (1 - z); seamY = ay * (1 - z);
-    }
-  }
-
   // Letterboxed, i.e. there is screen the picture is not on. Half a pixel
   // of slack so a rounding artefact on a phone cannot switch it on.
   function isBoxed(fit) { return fit.dx > 0.5 || fit.dy > 0.5; }
 
-  /* Returns the index actually painted, or -1 if nothing could be. The
-     caller keeps that rather than the index it asked for, so a frame drawn
-     from a fallback is repainted once the real one lands. drewTier is
-     what it was painted from: 2 the frame, 1 its cell on a sheet. */
-  var drewTier = 0;
+  /* ------------------------------------------------------------------
+     The picture is one film.
 
-  function draw(want) {
-    // The two blocks are separate ranges of the same slot space, and each
-    // falls back only within itself.
-    var tail = want >= TAIL_BASE;   // TAIL_BASE..TAIL_LAST are the folders
-    var idx  = want;
-    if (!have(want)) {
-      idx = tail ? paintable(want, TAIL_BASE, TAIL_LAST)
-                 : paintable(want, 0, TOTAL - 1);
+     Everything the canvas shows — the strip of frames with both seam
+     push-ins, the window walked down descent_strip.jpg, frames11 and
+     frames12, the two layers of the closing bit, and every picture in
+     between two frames — is rendered ahead of time into one video,
+     alta-journey.mp4, at the pacing this page already had: one video
+     frame for every vh of scroll that moves. The in-between pictures are
+     made offline from the optical flow between neighbouring frames, so
+     the picture travels instead of dissolving, and every one of them is
+     as sharp as the frames either side of it.
+
+     This replaces the page decoding 531 JPGs under the thumb. On a phone
+     that could not keep up: a third of the time the canvas was still
+     showing an older frame than the scroll had reached, then caught up in
+     a jump, and it changed between the light 352px copy and the real
+     frame as frames arrived. A video is what a phone's hardware decoder
+     is built for, so the frames simply are there.
+
+     The film is fetched once as plain bytes. FILM says where each of its
+     frames sits in them, and the frames are decoded a group at a time
+     (a keyframe and the frames after it) with WebCodecs, around wherever
+     the picture is and ahead of it in the direction of travel. Only the
+     groups around the picture are kept. A browser without WebCodecs gets
+     the same film through a <video> element that is seeked.
+  ------------------------------------------------------------------ */
+  var FILM = {"src":"alta-journey.mp4","bytes":43376333,"first":9990,"frames":1959,"gop":12,"fps":30.0,"width":960,"height":1704,"cropW":960,"cropH":1703,"codec":"avc1.640029","description":"AWQAKf/hABhnZAAprLIB4Br/LCAAAAMAIAAAB4HjBkkBAAZo68EzyPD9+PgA","D":1.0,"joinVh":4.0,"nS":1201,"nJ":4,"nD":301,"nT":341,"nB":111,"sizes":[154516,8720,68849,11717,60382,12589,68425,13748,60783,13048,43756,38026,163377,42563,12080,55208,12302,44798,11836,51954,12612,48911,13261,39163,157692,39615,12234,31651,44656,13458,37152,12441,38126,30708,17212,41237,163659,32859,12409,32045,31944,18354,33501,12712,38787,34945,14599,38542,168034,25299,37336,13563,32958,13489,36493,13795,35857,32964,13148,36619,164040,14224,32812,11881,28997,29605,19532,33037,12603,34341,15617,33129,165877,4644,27753,30219,11618,33962,12785,24353,33852,11266,28155,33367,155516,42641,28411,27701,10146,29093,25498,24141,14549,25754,28589,11741,167087,25494,10864,26517,14179,11161,28442,10978,30145,13241,14998,23665,166136,25938,12302,26339,13250,9979,27552,11825,26630,12710,10320,30447,166582,3497,24515,11167,25927,11951,10322,28744,11381,26571,11758,10544,164933,3557,23449,11116,9941,26167,10887,25067,11866,9871,26448,11275,163507,4087,5128,24898,12461,8986,26851,11084,21827,14613,10052,27057,155680,5620,22365,9008,26014,12092,9249,23988,10372,18575,20805,10897,156939,3707,4673,23991,11791,11678,10990,18671,25524,13677,12055,11606,140088,6344,23372,12543,10852,10117,9872,9253,23424,15543,12033,10790,125382,4601,10643,21339,11182,9714,9226,8865,9141,26543,12386,9813,114667,4150,5246,18810,13857,9966,8826,8412,7531,12076,22052,10776,100901,3952,4771,5363,23195,10174,8651,7380,7206,6546,20514,13570,89728,2489,21882,4403,18281,4769,19495,5036,21935,6097,14003,16647,82322,21752,8296,5701,24287,7257,10017,21610,7060,23408,7839,26573,84728,19862,7238,25956,7512,23795,7782,28839,8241,25640,12490,7578,84061,8975,6306,15800,19877,7722,32582,10294,7280,31322,11281,6924,86040,5680,5306,26896,15744,9416,7351,37762,10090,7943,10836,34325,80358,4560,7627,36359,9742,8208,7275,38560,9411,8564,7293,26572,80636,5671,5976,6397,38024,9293,9204,7362,18817,35046,9506,7405,73498,5761,5551,34239,10031,7023,36231,12149,6500,32480,10150,6571,71016,5813,5801,7888,32171,8847,6467,35270,9057,7520,6161,31899,65431,4243,20848,20689,8375,6197,32975,10379,8354,6455,27349,23242,63196,4334,10676,33278,9092,6623,5913,33240,7534,7151,5666,29719,62095,6975,5144,5874,34275,8128,6941,5701,25287,19262,10830,6431,52564,30195,7770,7037,5855,21182,27412,8963,6365,6115,34373,8167,57727,4359,14185,31206,8697,7130,6547,31824,8835,10882,6281,9722,61218,5598,5693,5656,28382,13080,14027,6599,7511,30934,9461,8137,58055,21606,19515,11396,7500,7263,32298,9408,8660,7170,19978,26638,68126,5026,6818,28707,10338,10232,7682,15555,28908,11050,8792,8759,78897,8507,9699,7383,12627,31793,12214,10551,10577,27537,17215,16613,84238,7729,27498,11288,9576,9144,26958,25029,15413,10332,11226,41126,102163,6705,7223,22924,32641,13134,9321,32445,23278,11706,8015,7242,113327,8214,6910,8050,6493,6268,19443,34261,10806,11548,8728,8205,108374,31059,10629,10433,9059,7842,7306,28796,15805,10982,10915,8012,111264,13446,32302,9658,9971,7740,7460,8758,35580,9989,10123,8579,115244,4325,23023,17319,11695,11710,7869,7670,14650,28470,10745,11433,120015,3720,5652,32924,10037,10455,8970,7911,7741,28599,17309,12551,128804,4081,5291,10797,26855,11443,11652,8831,8566,9043,31181,11114,134051,4231,4118,11446,30582,10324,9538,8836,38232,12166,10256,8203,135602,21345,9661,8373,7126,19623,31235,11648,9075,8080,37949,11203,148430,2727,14001,29210,12721,7904,13696,29715,11696,6915,32275,9662,142060,11003,10697,7846,65970,4053,39649,6450,4957,37048,7194,5522,111745,2857,3415,5600,38380,7695,6757,11501,38984,8283,6956,6270,114424,2634,3400,3817,44057,8494,7250,5706,27856,19698,9140,7472,99983,44707,9246,8033,6881,6332,13566,37608,9885,8314,7129,6150,98520,11986,7613,6618,5911,6138,37900,8603,8246,7005,5791,37578,112211,2957,4060,4673,4575,17954,37385,10293,9219,7874,7076,7081,110664,3226,4397,4686,4534,7763,40130,8962,8189,7831,6625,20537,108219,3621,4699,4440,4239,25058,25199,10441,8751,7193,5773,39780,105357,3036,3982,4551,8740,40806,9425,9121,8323,7181,9258,41919,104203,3678,4420,4821,4595,40154,9008,8918,7675,6943,5786,38044,103097,3020,4028,4483,4590,35316,13456,9671,8248,7565,5901,25387,101004,3148,3907,5387,36949,9297,7629,36597,9182,11403,30384,8621,92289,5180,5014,35283,9499,7324,37157,9278,7237,35071,9232,9658,92854,3894,29646,15502,9441,10809,38139,9639,6770,35033,9404,7188,96418,4461,4559,38149,8915,6968,36746,8829,6920,39112,9292,6883,96286,3947,5337,39905,9169,7019,36626,8574,15358,29921,8377,25527,94518,3915,38853,11476,8841,17379,76422,10532,9329,7479,46811,12310,113385,41404,12027,9165,32017,26134,11791,8773,36746,11865,9218,29199,125018,4626,5557,45673,12858,9513,17900,41103,12508,9498,35474,13938,120768,4786,44468,12054,9831,9094,44900,11925,10636,11780,46227,14216,119386,12740,26602,11856,8735,29464,23830,12321,8796,41111,13028,10498,107468,43521,12471,10361,9186,34803,11580,10179,8894,41517,11903,10013,103941,37052,14262,12556,9003,18773,37972,12139,9682,9030,34755,11427,103678,5380,21498,34770,12004,9299,8622,38904,10713,9720,8327,38471,100911,5956,6349,19521,24409,12497,8238,7836,36564,10430,9186,7810,93556,5797,6654,6186,29792,14904,11019,8193,22711,13701,10604,7773,81402,11298,10047,6469,14402,26145,11941,7413,29036,12249,9510,7856,86280,5296,5081,11047,26087,11301,7146,28780,11248,7012,24578,15539,86664,3981,20922,9558,6622,31264,10209,7108,17728,20922,9439,6701,89099,4286,4629,8009,43529,33287,8095,16567,13930,22478,7316,19933,93227,3329,18788,21415,7157,18992,21677,7460,22615,7232,18597,21648,89037,21183,8218,15146,23952,6928,17776,23371,7649,18616,15426,12265,95473,3556,17629,7977,18050,21428,7244,19914,22696,7231,24124,7512,91894,24112,7540,20435,12332,15368,18999,10879,22726,7618,20837,23559,93188,23248,7516,17088,26691,7700,21263,15003,17543,8656,24236,9543,98892,7400,19814,14750,15799,18556,14216,21066,10594,14382,18821,9180,93929,4642,20032,12660,41269,59504,51130,19075,25536,26830,8331,19938,101466,19782,8294,19995,20658,23435,8644,18534,20249,22239,8856,17179,103057,17850,18904,9039,18373,18974,22646,7978,16828,18025,18762,21851,103121,14936,18407,20298,9610,15726,17501,17954,20298,8436,18083,18921,106577,13575,9196,18276,18080,18191,19598,8177,17474,18206,18665,19697,101362,8707,15937,16389,17155,20126,9464,16592,17110,16544,18217,17612,111629,5042,16241,18277,17569,17125,17717,18411,20199,12571,30025,10072,115555,5638,26086,30221,10408,33731,10681,30177,9746,26791,29290,10581,121035,7702,23568,29831,10227,27949,10201,25000,27519,10366,23565,27579,117658,24392,9606,21955,26517,9162,24813,14392,18889,25252,8432,18894,112251,4994,19254,20382,8391,18989,17367,9737,20588,7377,17802,20208,96055,17869,8524,17532,16348,14643,12521,21077,6740,16786,5503,17158,92138,5984,19827,5263,16519,5911,8740,18593,5340,15497,5498,15457,83518,14978,5426,5414,21452,6088,4741,15358,5071,15031,5139,15171,80320,2508,13547,4827,15714,5436,5078,16364,5457,11994,11307,5103,76436,2719,3403,14104,6821,4843,12867,7661,5735,16707,5869,18558,75065,519,3953,23216,3264,2438,2226,4154,3049,4754,4701,5087,69638,1616,2193,2346,2573,2869,3912,1312,2336,3465,3019,3448,73104,3143,1948,2443,2457,4164,3040,4380,5415,1996,2229,2181,72959,1994,2434,2665,3544,2026,2530,3801,2988,4559,4545,5757,74385,2334,2263,2606,3270,3318,4595,2582,4598,4683,4602,3933,82793,3787,1394,1742,1693,3926,2614,4637,5610,3193,3338,3513,83172,2000,2490,2466,3064,1254,1846,3992,2827,3569,4464,6436,85436,1962,2525,2368,3494,5022,4020,1568,3170,3486,4727,3447,93627,3943,2173,2532,2754,4650,3072,4054,5895,2822,3138,3457,89095,1689,2117,2955,2726,2155,2810,5177,3615,5086,4062,3945,89161,1223,1549,1550,2908,4841,3507,1692,2842,2902,3060,2800,92766,2403,1194,1733,1795,2303,2220,4535,4461,2496,2152,2397,86830,1699,2100,2548,1317,1579,1559,2309,3631,2682,3072,2825,86609,1703,1860,2364,2000,1022,1326,2490,3313,4012,3515,2754,84331,1230,1506,2131,2820,3507,2670,1440,1467,2040,2422,3619,82215,2124,1848,2380,2499,2862,3027,3407,3996,2357,2257,3277,80446,3674,3697,3620,3538,3347,3989,5242,5366,5965,5940,5082,92712,2537,3212,4285,4193,4769,5173,3306,4299,4704,5423,5640,108083,3943,3297,3744,3655,5026,4756,4981,5621,3927,3932,4136,110709,3137,4062,3997,4337,2369,4076,5081,4025,5758,5499,5202,119577,3082,2631,3725,3513,3982,5578,1897,2507,3954,3597,4163,128580,3880,2446,2777,2977,4909,4151,4815,5284,2999,2726,3186,125804,2547,3698,3270,4166,2967,3898,4846,3779,6078,5080,4156,128121,2472,2689,3220,3386,4040,5700,2786,4083,4852,4277,4884,137201,2886,1805,2368,2370,4436,3493,4983,4070,2485,2774,2768,125958,1417,2142,1427,1043,2126,19748,53499,5867,5808,40257,10403,96753,19925,6850,33744,8976,31355,11057,8370,35083,9570,29497,10073,103631,11936,7336,28195,8971,29052,11684,8896,32542,11753,9219,31240,108321,30167,11761,22550,15392,9223,33569,10455,30451,11984,10212,31896,115520,29017,11425,10020,34204,11770,11515,30068,11308,34528,12144,10546,129113,5354,28106,11584,12762,36653,11011,33340,11729,23351,26979,11623,134943,5181,25950,19219,11324,33558,11145,38680,14204,11279,37167,14802,134979,28917,11150,39204,14098,21009,29053,11404,41333,14561,27279,18959,135859,37846,12470,36617,13687,11546,37433,13917,11687,40351,12445,38542,144508,7213,33569,12517,38308,12531,22219,36336,12407,33449,12912,15260,144405,4980,41633,11634,9343,43347,10769,51085,10918,48793,12522,10195,136172,5738,7263,48748,15727,11228,9800,51436,11273,10162,40852,38960,120258,5645,49823,13211,10926,9923,55785,12713,13217,11199,49462,14839,114191,14112,52958,13438,11941,11617,13790,52943,13098,14000,9507,40793,114811,6356,7949,8775,51438,12918,12877,10350,9718,45853,12253,10605,99878,18261,48467,12041,13895,8381,16049,42845,11535,10091,8768,21453,108285,5741,8858,6752,12035,44422,11274,10098,9502,14991,48293,11829,106349,5730,7395,39353,29852,13233,11068,9198,13929,48310,11609,11639,105555,6988,47750,18045,13544,10236,8811,32652,27479,13340,10002,10206,96146,40764,11680,12535,8402,15019,42079,11035,9921,9158,18021,44213,106752,7811,6562,13721,39187,11701,9904,8439,24723,40120,11725,11814,98564,12698,36683,11574,10198,9222,17291,40383,11839,13283,9457,9019,101511,12881,9638,8076,7154,7927,37141,10788,12033,9181,8860,29349,108415,6357,7464,6596,6564,36918,10673,12649,9181,9117,29205,28238,107912,5686,6410,6868,35438,10838,11571,8889,8868,25290,32945,11789,101770,4623,18968,26532,14844,8953,8440,25184,27162,12327,11061,8739,99171,39148,11850,11778,8108,12900,31525,16120,8841,8242,32687,16363,111608,4041,5319,33734,12730,8810,7710,24054,23725,11692,9693,9467,111656,4601,5235,15975,26164,11709,7180,29808,12165,8107,10794,26601,105381,4448,19321,49180,64198,32270,27532,17029,14086,12672,12740,12246,170979,5020,6101,6633,7238,7847,8410,8677,8622,8958,9409,9214,172227,4867,5858,5540,6748,7275,7422,7529,8211,8272,8456,8845,174149,4522,5367,5724,6479,6923,7537,7637,8160,8425,9063,8816,172741,4299,5142,5552,6337,6138,7055,7291,8012,7233,7156,7354,173796,3899,4915,4967,6091,6447,6912,6898,7398,7544,7941,8237,172351,3777,4668,4842,5798,6017,6421,6915,7328,7299,7514,7764,171286,3944,4828,4841,5860,6094,6555,6864,7040,7209,7686,7828,170476,3873,4570,4681,5443,5371,5657,5783,5691,5199,5095,4406,136007,1893,1258]};
+
+  // The picture's own rectangle inside every video frame. The film is one
+  // row taller than the frames so its height is even; that row is never
+  // drawn.
+  var FRAME_W = FILM.cropW, FRAME_H = FILM.cropH;
+
+  /* Where on the film the picture is for scroll position y, as a frame
+     position and not a frame: 312.4 is four tenths of the way from frame
+     312 to 313. Every boundary is the one measure() already computes, so
+     the film lands on the page exactly where the frames used to. The
+     holds stay holds: the last FILM.joinVh of each is where the film
+     carries the picture over to the next block, which used to be a swap
+     from one picture to the next on a single pixel of scroll. */
+  function filmPos(y) {
+    var F = FILM, J = F.joinVh * M.unit;
+    var s1 = F.nS - 1;            // last frame of the strip
+    var d0 = s1 + F.nJ;           // first frame of the descent
+    var d1 = d0 + F.nD - 1;       // its foot
+    var t0 = d1 + F.nJ;           // first frame of frames11
+    var t1 = t0 + F.nT - 1;       // last frame of frames12
+    if (y <= M.animEnd)          { return clamp(y / M.animEnd, 0, 1) * s1; }
+    if (y < M.journeyEnd - J)    { return s1; }
+    if (y < M.journeyEnd)        { return s1 + (y - M.journeyEnd + J) / J * F.nJ; }
+    if (y <= M.descentEnd)       { return d0 + (y - M.descentStart) / (M.descentEnd - M.descentStart) * (F.nD - 1); }
+    if (y < M.holdEnd - J)       { return d1; }
+    if (y < M.holdEnd)           { return d1 + (y - M.holdEnd + J) / J * F.nJ; }
+    if (y <= M.tailEnd)          { return t0 + (y - M.holdEnd) / (M.tailEnd - M.holdEnd) * (F.nT - 1); }
+    if (y <= M.bitEnd)           { return t1 + (y - M.tailEnd) / (M.bitEnd - M.tailEnd) * (F.nB - 1); }
+    return F.frames - 1;
+  }
+
+  var flags = String(location.search || '');
+  var isWebKit = /AppleWebKit/.test(navigator.userAgent) &&
+                 !/Chrome|Chromium|Edg\/|OPR\/|Android/.test(navigator.userAgent);
+
+  var film = {
+    mode: '',            // 'codec' or 'video'
+    off: null,           // byte offset of every frame, and of the end
+    buf: null, loaded: 0, complete: false,
+    decoder: null, cfg: null, busy: false, busySince: 0, gen: 0, fails: 0,
+    // Safari keeps the decoder's own frames, as on the Hawaii site; ?raw=1
+    // and ?raw=0 force one way or the other.
+    keepRaw: flags.indexOf('raw=1') >= 0 || (isWebKit && flags.indexOf('raw=0') < 0),
+    cache: {}, count: 0, // frame index -> VideoFrame or ImageBitmap
+    want: 0, dir: 1,     // the frame the picture wants, and which way it is going
+    shown: -1,           // the frame on the canvas
+    painted: false,
+    video: null,
+    converting: 0,       // frames on their way to becoming bitmaps
+    msPer: 0,            // how long the decoder takes per frame, measured
+    speed: 0,            // frames a second the picture is going through
+    stats: { decoded: 0, groups: 0, exact: 0, near: 0, none: 0 }
+  };
+  window.__film = film;
+
+  (function () {
+    var o = new Float64Array(FILM.frames + 1), p = FILM.first, i;
+    for (i = 0; i < FILM.frames; i++) { o[i] = p; p += FILM.sizes[i]; }
+    o[FILM.frames] = p;
+    film.off = o;
+  })();
+
+  function groupOf(i) { return (i / FILM.gop) | 0; }
+  function groups() { return Math.ceil(FILM.frames / FILM.gop); }
+
+  // Are the bytes of group g here yet?
+  function haveGroup(g) {
+    var last = Math.min(FILM.frames, (g + 1) * FILM.gop);
+    return !!film.buf && film.off[last] <= film.loaded;
+  }
+
+  function dropFrame(img) {
+    if (img && typeof img.close === 'function') { try { img.close(); } catch (e) {} }
+  }
+
+  function dropAll() {
+    for (var k in film.cache) { if (film.cache.hasOwnProperty(k)) { dropFrame(film.cache[k]); } }
+    film.cache = {}; film.count = 0;
+  }
+
+  /* What is kept. Frames are taken in if they are within reach of the
+     picture and dropped, farthest first, once there are more than KEEP of
+     them — and a frame behind the direction of travel counts as three
+     times as far as one ahead, because that is where the picture is not
+     going. */
+  var KEEP = FILM.gop * 4;   // more than schedule() ever asks for, so nothing it decodes is thrown straight back
+
+  function reach(i) {
+    var d = (i - film.want) * film.dir;
+    return d >= 0 ? d : -3 * d;
+  }
+
+  function trim() {
+    if (film.count <= KEEP) { return; }
+    var ks = [], k;
+    for (k in film.cache) { if (film.cache.hasOwnProperty(k)) { ks.push(+k); } }
+    ks.sort(function (x, y) { return reach(y) - reach(x); });
+    while (film.count > KEEP && ks.length) {
+      k = ks.shift();
+      dropFrame(film.cache[k]); delete film.cache[k]; film.count--;
     }
-    // Nothing in this block at all: leave whatever is on the canvas. It
-    // is never black — the poster stays up until the first frame has
-    // been painted — and a picture that does not move is the whole of
-    // what a reader who has outrun a slow connection should see.
-    if (idx < 0) { drewTier = 0; return -1; }
+  }
 
-    var fit = bmp[idx] ? coverFit(bw[idx], bh[idx]) : coverFit(FRAME_W, FRAME_H);
-    seam(idx);
+  function putFrame(i, img) {
+    if (reach(i) > FILM.gop * 12) { dropFrame(img); return; }
+    var old = film.cache[i];
+    if (old) { dropFrame(old); } else { film.count++; }
+    film.cache[i] = img;
+    trim();
+    kick();
+  }
 
-    // Under cover the frame fills the glass and there is nothing to clear;
-    // only a letterboxed screen has margins to keep black.
+  function onDecoded(frame) {
+    var i = frame.timestamp | 0;
+    film.stats.decoded++;
+    if (film.keepRaw || typeof window.createImageBitmap !== 'function') { putFrame(i, frame); return; }
+    var pr;
+    film.converting++;
+    try { pr = window.createImageBitmap(frame); } catch (e) { film.converting--; film.keepRaw = true; putFrame(i, frame); return; }
+    pr.then(function (b) { film.converting--; dropFrame(frame); putFrame(i, b); },
+            function () { film.converting--; film.keepRaw = true; putFrame(i, frame); });
+  }
+
+  function openDecoder() {
+    var gen = ++film.gen;
+    try {
+      film.decoder = new window.VideoDecoder({
+        output: function (f) { if (gen === film.gen) { onDecoded(f); } else { dropFrame(f); } },
+        error: function () { if (gen === film.gen) { codecFail(); } }
+      });
+      film.decoder.configure(film.cfg);
+    } catch (e) { film.decoder = null; codecFail(); }
+  }
+
+  // A decoder that errors or goes quiet is replaced, holding frames the
+  // other way first; after that the film is played through <video>.
+  function codecFail() {
+    if (film.mode !== 'codec') { return; }
+    film.gen++; film.busy = false;
+    dropAll();
+    try { if (film.decoder && film.decoder.state !== 'closed') { film.decoder.close(); } } catch (e) {}
+    film.decoder = null;
+    film.fails++;
+    film.keepRaw = !film.keepRaw;
+    if (film.fails <= 2) { openDecoder(); kick(); } else { useVideo(); }
+  }
+
+  /* Decode a list of frames in one go: either a whole group, keyframe
+     first, or a handful of keyframes on their own. Each answers on its
+     own, so the list needs nothing but its order. The time it takes is
+     how fast this decoder is, which is what schedule() plans against. */
+  function decodeList(list) {
+    var gen = film.gen, t0 = clock(), i, j;
+    film.busy = true; film.busySince = t0;
+    try {
+      for (j = 0; j < list.length; j++) {
+        i = list[j];
+        film.decoder.decode(new window.EncodedVideoChunk({
+          type: i % FILM.gop === 0 ? 'key' : 'delta', timestamp: i, duration: 1,
+          data: film.buf.subarray(film.off[i], film.off[i + 1])
+        }));
+      }
+      film.decoder.flush().then(function () {
+        if (gen !== film.gen) { return; }
+        var per = (clock() - t0) / list.length;
+        film.msPer = film.msPer ? film.msPer * 0.7 + per * 0.3 : per;
+        film.stats.groups++;
+        film.busy = false;
+        schedule();
+        kick();
+      }, function () { if (gen === film.gen) { codecFail(); } });
+    } catch (e) { codecFail(); }
+  }
+
+  function groupDone(g) {
+    var a = g * FILM.gop, b = Math.min(FILM.frames, a + FILM.gop), i;
+    for (i = a; i < b; i++) { if (!film.cache[i]) { return false; } }
+    return true;
+  }
+
+  function groupList(g) {
+    var a = g * FILM.gop, b = Math.min(FILM.frames, a + FILM.gop), l = [], i;
+    for (i = a; i < b; i++) { l.push(i); }
+    return l;
+  }
+
+  /* What to decode next.
+
+     While the decoder can keep up with the picture, whole groups: the
+     picture's own, then the ones ahead of it — two when it is moving
+     briskly — and the one behind only when it is nearly still, in case it
+     turns round. That is every frame, so a scroll at any ordinary speed
+     and the frame the picture comes to rest on are always exact.
+
+     When the picture outruns the decoder — a hard flick on a slow phone —
+     the frames in between are going by too fast to be seen, so it decodes
+     only the keyframe of each group ahead, one per group, and the picture
+     keeps moving on those until it slows and the whole groups come back.
+     It never waits for a group it has already passed. */
+  function schedule() {
+    if (film.mode !== 'codec' || film.busy || film.converting > 8) { return; }
+    if (!film.decoder) { openDecoder(); if (!film.decoder) { return; } }
+    var g = groupOf(film.want), n = groups(), dir = film.dir, h, k;
+    var cap = film.msPer ? 1000 / film.msPer : 240;          // frames a second the decoder manages
+    var behind = film.shown < 0 ? 0 : (film.want - film.shown) * dir;
+    var fast = film.speed > cap * 0.85 || behind > FILM.gop * 2;
+    if (fast) {
+      var lead = Math.min(10, Math.ceil(film.speed * 0.3 / FILM.gop) + 1), keys = [];
+      for (k = 0; k <= lead && keys.length < 3; k++) {
+        h = g + dir * k;
+        if (h < 0 || h >= n) { break; }
+        if (!film.cache[h * FILM.gop] && haveGroup(h)) { keys.push(h * FILM.gop); }
+      }
+      if (keys.length) { decodeList(keys); return; }
+    }
+    var order = [g, g + dir];
+    if (film.speed > 40) { order.push(g + 2 * dir); }
+    else if (film.speed < 15) { order.push(g - dir); }
+    for (k = 0; k < order.length; k++) {
+      h = order[k];
+      if (h < 0 || h >= n || groupDone(h) || !haveGroup(h)) { continue; }
+      decodeList(groupList(h));
+      return;
+    }
+  }
+
+  function watchDecoder(now) {
+    if (film.mode === 'codec' && film.busy && now - film.busySince > 3500) { codecFail(); }
+  }
+
+  function fetchFilm() {
+    var ctl = window.AbortController ? new AbortController() : null;
+    film.abort = ctl;
+    window.fetch(FILM.src, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
+      if (!r.ok) { throw new Error('film ' + r.status); }
+      var cl = parseInt(r.headers.get('Content-Length') || '0', 10);
+      if (cl && cl !== FILM.bytes) { throw new Error('film and index do not match'); }
+      film.buf = new Uint8Array(FILM.bytes);
+      if (!r.body || !r.body.getReader) {
+        return r.arrayBuffer().then(function (ab) {
+          film.buf.set(new Uint8Array(ab).subarray(0, FILM.bytes));
+          film.loaded = FILM.bytes; film.complete = true; progress(); kick();
+        });
+      }
+      var rd = r.body.getReader();
+      var pump = function () {
+        return rd.read().then(function (c) {
+          if (c.done) { film.complete = true; progress(); kick(); return; }
+          var v = c.value, room = FILM.bytes - film.loaded;
+          if (v.length > room) { v = v.subarray(0, room); }
+          film.buf.set(v, film.loaded);
+          film.loaded += v.length;
+          progress();
+          schedule();
+          return pump();
+        });
+      };
+      return pump();
+    }).catch(function () {
+      // Nothing on screen from the film yet: take the <video> route.
+      if (film.mode === 'codec' && !film.painted) { useVideo(); }
+    });
+  }
+
+  function startFilm() {
+    var force = flags.indexOf('engine=video') >= 0;
+    if (force || !window.VideoDecoder || !window.EncodedVideoChunk || !window.fetch) { useVideo(); return; }
+    film.cfg = { codec: FILM.codec, codedWidth: FILM.width, codedHeight: FILM.height,
+                 optimizeForLatency: true };
+    if (FILM.description) {
+      var desc = atob(FILM.description), u8 = new Uint8Array(desc.length), i;
+      for (i = 0; i < desc.length; i++) { u8[i] = desc.charCodeAt(i); }
+      film.cfg.description = u8;
+    }
+    var ok;
+    try { ok = window.VideoDecoder.isConfigSupported(film.cfg); } catch (e) { useVideo(); return; }
+    ok.then(function (s) {
+      if (s && s.supported) { film.mode = 'codec'; fetchFilm(); kick(); }
+      else { useVideo(); }
+    }, function () { useVideo(); });
+  }
+
+  /* The fallback: the same film in a <video>, seeked to the frame. Kept
+     in the document, invisible, so every browser actually decodes it. */
+  function useVideo() {
+    if (film.mode === 'video') { return; }
+    if (film.abort) { try { film.abort.abort(); } catch (e) {} }
+    film.gen++; film.busy = false;
+    dropAll();
+    try { if (film.decoder && film.decoder.state !== 'closed') { film.decoder.close(); } } catch (e) {}
+    film.decoder = null;
+    film.mode = 'video';
+    var v = document.createElement('video');
+    v.muted = true; v.playsInline = true;
+    v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+    v.preload = 'auto';
+    v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;z-index:0';
+    v.src = FILM.src;
+    document.body.appendChild(v);
+    film.video = v;
+    var again = function () { film.shown = -1; kick(); };
+    v.addEventListener('seeked', again);
+    v.addEventListener('loadeddata', again);
+    v.addEventListener('progress', function () { progress(); });
+    // iOS will not decode a frame for a video that has never been started.
+    var wake = function () {
+      var p = v.play();
+      if (p && p.then) {
+        p.then(function () {
+          v.pause();
+          window.removeEventListener('touchstart', wake);
+          window.removeEventListener('pointerdown', wake);
+        }, function () {});
+      }
+    };
+    window.addEventListener('touchstart', wake, { passive: true });
+    window.addEventListener('pointerdown', wake);
+    wake();
+    kick();
+  }
+
+  function seekVideo(i) {
+    var v = film.video;
+    if (!v || v.readyState < 1 || v.seeking) { return; }
+    var t = (i + 0.5) / FILM.fps;
+    if (Math.abs(v.currentTime - t) > 0.4 / FILM.fps) { try { v.currentTime = t; } catch (e) {} }
+  }
+
+  /* Paint frame i, or the nearest frame there is to it — behind the
+     direction of travel first, so a picture that has to wait waits where
+     it was rather than skipping ahead. Returns whether the frame painted
+     is the one that was asked for. */
+  function paintFilm(i) {
+    var img = null, at = -1, k, j;
+    if (film.mode === 'codec') {
+      if (film.cache[i]) { at = i; }
+      else {
+        for (k = 1; k <= FILM.gop * 3 && at < 0; k++) {
+          j = i - k * film.dir;
+          if (film.cache[j]) { at = j; break; }
+          j = i + k * film.dir;
+          if (film.cache[j]) { at = j; }
+        }
+      }
+      if (at < 0) { film.stats.none++; return false; }
+      // Never a step against the direction of travel: a frame the picture
+      // has already gone past stays gone, even if it is the nearer one.
+      if (film.shown >= 0 && (at - film.shown) * film.dir < 0 &&
+          (film.shown - i) * film.dir <= FILM.gop) { return false; }
+      if (at === film.shown) { return at === i; }
+      img = film.cache[at];
+    } else if (film.mode === 'video') {
+      var v = film.video;
+      if (!v || v.readyState < 2) { return false; }
+      img = v; at = Math.round(v.currentTime * FILM.fps - 0.5);
+      if (at === film.shown && !v.seeking) { return at === i; }
+    } else {
+      return false;
+    }
+    var fit = coverFit(FRAME_W, FRAME_H);
     if (isBoxed(fit)) {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, cw, ch);
     }
-
-    // A push-in on a letterboxed frame would otherwise spill out over the
-    // black either side of it and snap back at the cut.
-    var clip = seamZ !== 1 && isBoxed(fit);
-    if (clip) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(fit.dx, fit.dy, fit.dw, fit.dh);
-      ctx.clip();
-    }
-    drewTier = put(idx, fit.dx + seamX * fit.dw, fit.dy + seamY * fit.dh,
-                        seamZ * fit.dw, seamZ * fit.dh, 1);
-    ctx.globalAlpha = 1;
-    if (clip) { ctx.restore(); }
-    return idx;
-  }
-
-  /* ---- between two frames --------------------------------------------
-     pos is a frame position inside one block — the journey when base is
-     0, the tail when it is TAIL_BASE — and it is not a whole number while
-     the page is moving. This is what is on screen for the part of it
-     after the point.
-
-     Frame i is drawn carried f of the way along its measured move to
-     frame i + 1, and frame i + 1 carried back by the 1 - f that is left,
-     so the two are the same view of the same room and lie on top of each
-     other; then one is dissolved into the other. The move does the
-     travelling, and the dissolve only has to cover what a push and a
-     slide cannot describe — the near furniture going by faster than the
-     far wall. That is why it is not a plain cross-fade of two stills,
-     which is two exposures of everything that moved.
-
-     The dissolve is held to the middle of the step. For the first and
-     last fifth there is one frame on screen and nothing else, so what the
-     eye gets is a sharp picture in motion with a short hand-over in it,
-     and not a picture that goes soft and comes back once per frame.
-
-     Two draws wherever one layer covers the screen on its own, three
-     where neither does: a frame carried along its move has slid off one
-     edge by exactly as much as the other has slid off the opposite one,
-     and each fills the strip the other left.
-
-     At a flick neither is worth it. When `fast` says the picture is
-     changing faster than a dissolve can be seen, the nearest frame alone
-     is drawn — the frame itself, at full quality, and if the bitmaps
-     cannot be made as fast as the thumb is going, frames are dropped
-     rather than quality: the nearest one in hand is drawn.
-
-     drewExact is the answer to "is that what was asked for": false
-     whenever this had to settle for less — a neighbour, or a stand-in
-     off a sheet — so the loop asks again.
-  ------------------------------------------------------------------ */
-  var BLEND_FROM = 0.2, BLEND_TO = 0.8;   // of a step, where the dissolve runs
-  var WHOLE      = 0.002;                 // this near a frame is that frame
-  var FAST_IN    = 0.9;                   // frames per tick: above this, flying
-  var FAST_OUT   = 0.6;                   // and below this, not any more
-
-  var drewExact = false;
-
-  // A step's move, carried g of the way: g of 1 is all of it, a negative g
-  // is back along it. The scale is s to the g, and the shift is what a
-  // point at the origin has travelled by then — which is not g times the
-  // whole shift once there is a scale in it too.
-  var partS = 1, partK = 0;
-  function part(s, g) {
-    partS = Math.pow(s, g);
-    partK = (s > 1.000001 || s < 0.999999) ? (partS - 1) / (s - 1) : g;
-  }
-
-  function drawAt(base, pos, fast) {
-    var hi = base ? TAIL_LAST : TOTAL - 1;
-    var i = Math.floor(pos), f = pos - i;
-    if (f > 1 - WHOLE) { i += 1; f = 0; } else if (f < WHOLE) { f = 0; }
-    var a = base + i, b = a + 1;
-    var near = (f < 0.5) ? a : b;
-
-    var ha = have(a), hb = (b <= hi) ? have(b) : 0;
-    if (f === 0 || fast || !ha || !hb) {
-      var took = draw(near);
-      drewExact = (took === near) && f === 0 && drewTier === 2 && !revealing;
-      return took;
-    }
-
-    var fa = ha === 2 ? coverFit(bw[a], bh[a]) : coverFit(FRAME_W, FRAME_H);
-    var fb = hb === 2 ? coverFit(bw[b], bh[b]) : coverFit(FRAME_W, FRAME_H);
-
-    var s  = 1 + (base ? TMOVE_S[i] : MOVE_S[i]) / 10000;
-    var tx = (base ? TMOVE_X[i] : MOVE_X[i]) / 10000;
-    var ty = (base ? TMOVE_Y[i] : MOVE_Y[i]) / 10000;
-
-    // Frame a, forward by f.
-    part(s, f);
-    seam(a);
-    var aw = partS * seamZ * fa.dw, ah = partS * seamZ * fa.dh;
-    var ax = fa.dx + (partS * seamX + tx * partK) * fa.dw;
-    var ay = fa.dy + (partS * seamY + ty * partK) * fa.dh;
-
-    // Frame b, back by what is left.
-    part(s, f - 1);
-    seam(b);
-    var bw2 = partS * seamZ * fb.dw, bh2 = partS * seamZ * fb.dh;
-    var bx = fb.dx + (partS * seamX + tx * partK) * fb.dw;
-    var by = fb.dy + (partS * seamY + ty * partK) * fb.dh;
-
-    // How far through the hand-over: 0 is all a, 1 is all b. A step with
-    // no move in the tables has nothing to travel along, so there the
-    // dissolve is the whole of the motion and it takes the whole step —
-    // held to the middle it would be two stills with a pause either side.
-    //
-    // And on a push the window runs out to the end of the step. The frame
-    // being carried back is drawn smaller than the glass until the step is
-    // complete, and what shows round its edge is the other frame; while it
-    // is still partly transparent that edge is not there to be seen, and
-    // by the time it is opaque it has reached the glass.
-    var still = (s === 1 && tx === 0 && ty === 0);
-    var from = still ? 0 : BLEND_FROM, to = still ? 1 : BLEND_TO;
-    if (s > 1.002) { to = 1; } else if (s < 0.998) { from = 0; }
-    var m = (f - from) / (to - from);
-    m = m < 0 ? 0 : (m > 1 ? 1 : m);
-    m = m * m * (3 - 2 * m);
-
-    // What has to be covered: the glass, or on a letterboxed screen the
-    // frame's own rectangle, which the layers are also clipped to so a
-    // frame in transit cannot wander out over the black.
-    var x0 = 0, y0 = 0, x1 = cw, y1 = ch;
-    var clip = isBoxed(fa);
-    if (clip) {
-      x0 = fa.dx; y0 = fa.dy; x1 = fa.dx + fa.dw; y1 = fa.dy + fa.dh;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(fa.dx, fa.dy, fa.dw, fa.dh);
-      ctx.clip();
-    }
-    var coverA = ax <= x0 && ay <= y0 && ax + aw >= x1 && ay + ah >= y1;
-    var coverB = bx <= x0 && by <= y0 && bx + bw2 >= x1 && by + bh2 >= y1;
-
-    // Cleared only when neither layer covers the screen on its own — one
-    // less full-screen fill on every tick of a scroll.
-    if (!coverA && !coverB) {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, cw, ch);
-    }
-
-    if (m === 0) {
-      if (!coverA) { put(b, bx, by, bw2, bh2, 1); }
-      put(a, ax, ay, aw, ah, 1);
-    } else if (m === 1) {
-      if (!coverB) { put(a, ax, ay, aw, ah, 1); }
-      put(b, bx, by, bw2, bh2, 1);
-    } else if (coverA) {
-      put(a, ax, ay, aw, ah, 1);
-      put(b, bx, by, bw2, bh2, m);
-    } else if (coverB) {
-      put(b, bx, by, bw2, bh2, 1);
-      put(a, ax, ay, aw, ah, 1 - m);
-    } else {
-      put(a, ax, ay, aw, ah, 1);
-      put(b, bx, by, bw2, bh2, 1);
-      put(a, ax, ay, aw, ah, 1 - m);
-    }
-    ctx.globalAlpha = 1;
-    if (clip) { ctx.restore(); }
-
-    drewTier = (ha === 2 && hb === 2) ? 2 : 1;
-    drewExact = drewTier === 2 && !revealing;
-    return near;
-  }
-
-  /* One window on the descent strip, yOff pixels down it. Same fit, same
-     dx/dy/dw/dh, no seam zoom — there is no cut here to hide, the strip
-     is one photograph. yOff is left fractional on purpose: it is a
-     sub-pixel pan over an image already being resampled, and rounding it
-     to whole source pixels would only put a stutter into the one part of
-     the page that moves at a constant rate. */
-  function drawStrip(yOff) {
-    var strip = bmp[TOTAL];
-    if (!strip) { return false; }
-
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, cw, ch);
-
-    var fit = coverFit(STRIP_W, STRIP_WIN);
-    ctx.drawImage(strip, 0, yOff, STRIP_W, STRIP_WIN,
-                         fit.dx, fit.dy, fit.dw, fit.dh);
-    return true;
-  }
-
-  /* The closing bit at fraction t of its 90vh.
-
-     Three draws. The first is the terrace laid over the whole frame
-     rectangle and it exists only as backing: the far layer is smaller than
-     the frame until t reaches 1, and the margin it leaves has to be
-     terrace rather than black. At t=0 that margin is entirely behind the
-     door frame anyway, and by the time the frame has flown off it has
-     shrunk to a sliver at the very edge.
-
-     Then the far layer at its own scale and offset, then the door frame
-     scaled about the centre of the frame rectangle. The near layer keeps
-     full opacity the whole way — it leaves the screen by moving, which is
-     what walking through a doorway looks like, and a cross-fade would only
-     make it evaporate on the spot.
-  ------------------------------------------------------------------ */
-  function drawBit(t) {
-    var terr = bmp[TERR_SLOT], jamb = bmp[JAMB_SLOT];
-    if (!terr) { return false; }
-
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, cw, ch);
-
-    var fit = coverFit(TERR_W, TERR_H);
-    ctx.drawImage(terr, fit.dx, fit.dy, fit.dw, fit.dh);
-
-    var s = FAR_S0 + (1 - FAR_S0) * t;
-    ctx.drawImage(terr,
-                  fit.dx + FAR_DX * (1 - t) * fit.dw,
-                  fit.dy + FAR_DY * (1 - t) * fit.dh,
-                  fit.dw * s, fit.dh * s);
-
-    if (jamb) {
-      var z  = 1 + (NEAR_Z1 - 1) * t;
-      var cx = fit.dx + fit.dw / 2, cy = fit.dy + fit.dh / 2;
-      ctx.drawImage(jamb, cx - fit.dw * z / 2, cy - fit.dh * z / 2,
-                          fit.dw * z, fit.dh * z);
-    }
-    return true;
+    try {
+      ctx.drawImage(img, 0, 0, FRAME_W, FRAME_H, fit.dx, fit.dy, fit.dw, fit.dh);
+    } catch (e) { return false; }
+    film.shown = at;
+    if (!film.painted) { film.painted = true; }
+    if (at === i) { film.stats.exact++; } else { film.stats.near++; }
+    return at === i;
   }
 
   /* ---- where the frame lands, in CSS pixels --------------------------
@@ -2540,7 +2251,7 @@
   var sweepRows  = null;
   var posterDown = false;
 
-  function overlay(y) {
+  function overlay(y, yRaw) {
     var i, cap;
     for (i = 0; i < CAPTIONS.length; i++) {
       cap = CAPTIONS[i];
@@ -2601,7 +2312,7 @@
        has to be a flat field of cream — .85 of them still reads through
        .92 of veil.
     ------------------------------------------------------------------ */
-    var vp = clamp((y - M.endHold) / (M.veilEnd - M.endHold), 0, 1);
+    var vp = clamp((yRaw - M.endHold) / (M.veilEnd - M.endHold), 0, 1);
     if (vp !== veilShown) {
       veilShown = vp;
       veil.style.opacity    = VEIL_MAX * vp;
@@ -2636,8 +2347,8 @@
     // And its way out, which is not part of the crossing: the box fades
     // over the first INTRO_OUT_VH of the section, while the 34vh of top
     // padding below is still the only thing on screen.
-    var io = (y < M.endHold) ? 0
-           : 1 - easeInOut(clamp((y - M.veilEnd) / (M.introOut - M.veilEnd), 0, 1));
+    var io = (yRaw < M.endHold) ? 0
+           : 1 - easeInOut(clamp((yRaw - M.veilEnd) / (M.introOut - M.veilEnd), 0, 1));
     if (io !== introShown) {
       introShown = io;
       intro.style.opacity = io;
@@ -2646,7 +2357,7 @@
     // The observer's backstop, and only inside the section it belongs to:
     // above M.endHold there is nothing of it on screen to reveal, so the
     // journey never pays for this.
-    if (sweepRows && y > M.endHold) { sweepRows = sweepRows(); }
+    if (sweepRows && yRaw > M.endHold) { sweepRows = sweepRows(); }
   }
 
   // The canvas has a frame of its own up, so the still underneath it has
@@ -2665,235 +2376,53 @@
     poster.style.display = 'none';
   }
 
-  /* ---- the window -----------------------------------------------------
-     Bitmaps are kept for a window of slots around the playhead and freed
-     outside it. Measured before any of this existed: 409 frames held as
-     decoded <img>s took the renderer to 809MB after one walk down the
-     page, and iOS kills a tab long before that — or, short of killing it,
-     throws decoded pictures away and decodes them again on the main
-     thread the next time one is drawn, which is what a scroll that stops
-     and starts under the thumb is made of.
-
-     A bitmap is 6.5MB. Twelve behind and twenty-six ahead is 250MB, the
-     frames are made in the direction of travel at MAKE_PAR a time, and
-     because the bytes stay in the loader a reader who turns round gets
-     the frames behind them back in a few milliseconds each, off the main
-     thread, with the nearest frame in hand covering the wait.
-
-     Three slots are pinned: the descent strip and the two stills of the
-     closing bit. They are the only picture in their stretch of the page,
-     with no neighbouring frame to stand in for them.
-  ------------------------------------------------------------------ */
-  var BACK = 12, AHEAD = 26;      // bitmaps kept either side of the playhead
-  var MAKE_PAR = 4;               // being made at once
-  var FETCH_BACK = 40, FETCH_AHEAD = 120;   // and how far the bytes are asked for
-  var FETCH_CAP = 32;
-
-  var making = 0;
-  var inMake = new Array(LAST_SLOT + 1);
-  var tendSlot = -1e9, tendT = -1e9, tendTravel = 0;
-  var liteAt = -1, liteMaking = 0, inLiteMake = new Array(LITE_COUNT);
-
-  function pinned(i) { return i === TOTAL || i === TERR_SLOT || i === JAMB_SLOT; }
-
-  function free(i) {
-    var b = bmp[i];
-    if (!b) { return; }
-    bmp[i] = null;
-    if (typeof b.close === 'function') { b.close(); }
-    else if (b.__url) { URL.revokeObjectURL(b.__url); b.__url = ''; b.src = ''; }
-  }
-
-  function freeLite(k) {
-    var b = liteBmp[k];
-    if (!b) { return; }
-    liteBmp[k] = null;
-    if (typeof b.close === 'function') { b.close(); }
-    else if (b.__url) { URL.revokeObjectURL(b.__url); b.__url = ''; b.src = ''; }
-  }
-
-  // Ask the loader for a slot's bitmap, if it is wanted and not already
-  // in hand or on its way.
-  function consider(j) {
-    if (j < 0 || j > LAST_SLOT || bmp[j] || inMake[j] || !got[j]) { return; }
-    inMake[j] = true;
-    making++;
-    loaderMake('slot', j);
-  }
-
-  function windowOf(slot) {
-    var back = travel > 0 ? BACK : AHEAD, ahead = travel > 0 ? AHEAD : BACK;
-    return { lo: slot - back, hi: slot + ahead, span: back > ahead ? back : ahead };
-  }
-
-  // Fill the window from the playhead outward, forward first.
-  function topUp(slot) {
-    var w = windowOf(slot), k, j;
-    for (k = 0; k <= w.span && making < MAKE_PAR; k++) {
-      j = slot + travel * k;
-      if (j >= w.lo && j <= w.hi) { consider(j); }
-      if (k > 0) {
-        j = slot - travel * k;
-        if (j >= w.lo && j <= w.hi) { consider(j); }
-      }
-    }
-    for (k = 0; k <= LAST_SLOT && making < MAKE_PAR; k++) {
-      if (pinned(k)) { consider(k); }
-    }
-  }
-
-  /* The light copy's sheets are made only where they are needed — some
-     slot near the playhead with no bytes yet — and kept for the sheet
-     the playhead is on and one either side. A second visit, with every
-     frame cached, never makes one. */
-  function sheets(slot) {
-    var c = cellOf(slot);
-    if (c < 0) { return; }
-    var k = (c / LITE_PER) | 0, i, j, need = false;
-    for (i = -3; i <= 14 && !need; i++) {
-      j = slot + travel * i;
-      if (j >= 0 && j <= LAST_SLOT && cellOf(j) >= 0 && !got[j]) { need = true; }
-    }
-    if (k !== liteAt) {
-      liteAt = k;
-      for (i = 0; i < LITE_COUNT; i++) {
-        if (liteBmp[i] && (i < k - 1 || i > k + 1)) { freeLite(i); }
-      }
-    }
-    if (!need) { return; }
-    for (i = 0; i <= 1; i++) {
-      j = k + travel * i;
-      if (j >= 0 && j < LITE_COUNT && !liteBmp[j] && !inLiteMake[j] && liteGot[j] && liteMaking < 2) {
-        inLiteMake[j] = true;
-        liteMaking++;
-        loaderMake('lite', j);
-      }
-    }
-  }
-
-  // Once a tick, or less: free what the window has left behind, top it
-  // up, and tell the loader what to pull next.
-  function tend(slot, now) {
-    if (slot === tendSlot && travel === tendTravel && now - tendT < 120) { return; }
-    tendSlot = slot; tendT = now; tendTravel = travel;
-
-    var w = windowOf(slot), i, j, k;
-    for (i = 0; i <= LAST_SLOT; i++) {
-      if (bmp[i] && !pinned(i) && (i < w.lo || i > w.hi)) { free(i); }
-    }
-    topUp(slot);
-    sheets(slot);
-
-    // Bytes: nearest first, forward first, as far as FETCH_AHEAD.
-    var want = [];
-    for (k = 0; k <= FETCH_AHEAD && want.length < FETCH_CAP; k++) {
-      j = slot + travel * k;
-      if (j >= 0 && j <= LAST_SLOT && !got[j]) { want.push(j); }
-      if (k > 0 && k <= FETCH_BACK) {
-        j = slot - travel * k;
-        if (j >= 0 && j <= LAST_SLOT && !got[j]) { want.push(j); }
-      }
-    }
-    // Not before the page unlocks: the reader is at the top, the gate
-    // frames are what they need, and the wire belongs to the light copy.
-    if (ready) { loaderUrgent(want); }
-  }
-
-  // A bitmap has come back from the loader.
-  function landed(kind, i, b, w, h) {
-    var now = clock();
-    if (kind === 'lite') {
-      inLiteMake[i] = false;
-      liteMaking--;
-      if (b && !liteBmp[i] && liteAt >= 0 && i >= liteAt - 1 && i <= liteAt + 1) { liteBmp[i] = b; }
-      else if (b && typeof b.close === 'function') { b.close(); }
-      kick();
-      return;
-    }
-    inMake[i] = false;
-    making--;
-    var win = windowOf(tendSlot);
-    if (b && !bmp[i] && (pinned(i) || (i >= win.lo && i <= win.hi))) {
-      bmp[i] = b; bw[i] = w; bh[i] = h;
-      // The stand-in was just on screen for this one: come into focus
-      // rather than snap.
-      if (liteShown[i] && now - liteShown[i] < SHOWN_MS) { reveal[i] = now; }
-    } else if (b && typeof b.close === 'function') { b.close(); }
-    topUp(tendSlot);
-    kick();
-  }
-
   /* ---- render loop ----------------------------------------------------
      Two positions, not one. The scroll says where the page is; shownY is
      where the picture is, and it follows.
 
-     It follows closely. The first version of this closed 13.5% of the gap
-     per frame, which is 90% of it in a quarter of a second: long enough
-     that the picture was visibly somewhere the finger had already left,
-     and still moving after the finger had stopped. FOLLOW_MS is a time
-     constant, so the feel no longer depends on the screen's refresh rate,
-     and at 55ms the picture is where the finger is to within a frame or
-     two of display time — enough to take the grain out of a scroll that
-     arrives in whole pixels, not enough to feel.
+     It follows like a camera with weight. A thumb moves a page in bursts —
+     a swipe, a slowdown, the next swipe — and a picture tied to every
+     pixel of that surges with each swipe and nearly stops between them,
+     several times a second. So the scroll only says where the picture
+     should be, and the picture travels there on a critically damped
+     spring: it eases in and out, a run of swipes becomes one continuous
+     move, and it never overshoots or comes back. The captions and the
+     opening mark follow the picture rather than the scroll, so they stay
+     on the shot they belong to.
 
-     One position for the whole page. There used to be four playheads —
-     strip of frames, descent, tail, closing bit — each chasing its own
-     target, and a set of rules for which of them owned the canvas when a
-     flick had two in motion at once. Everything is now read off the one
-     followed scroll position, so the question cannot come up: where the
-     picture is decides what the picture is.
+     GLIDE is the spring's stiffness, per second. ?glide=0 ties the picture
+     to the scroll directly. A jump of more than JUMP screens — the End key,
+     a scrollbar drag — is cut to rather than travelled.
 
-     And it comes to rest on a frame. While the page moves the picture
-     may be anywhere between two frames; when the scroll has been still
-     for REST_MS it eases the last fraction of a step onto the nearer one
-     and stops, so what is looked at is always one photograph, whole and
-     sharp, and never two of them half dissolved. REST_PX of give, because
-     a thumb resting on glass is not still.
-
-     Deliberately not a CSS transition. There is nothing to transition —
-     the frame is painted with drawImage, so the easing has to happen on
-     the value before it is drawn, inside this loop.
-
-     The loop parks itself when there is nothing left to do and a scroll or
-     resize restarts it, so a still page costs nothing.
+     The loop parks itself when the picture has arrived and the frame on
+     the canvas is the one asked for; a scroll, a resize or a frame coming
+     back from the decoder starts it again.
   ------------------------------------------------------------------------ */
+  var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  var GLIDE = flags.indexOf('glide=0') >= 0 ? 0 : (coarse ? 6 : 8);
+  var JUMP  = 2.5;     // screens
 
-  var lastPos = -1, lastYOff = -1, lastW = -1, lastH = -1, hintHidden = false;
-
-  // Which way the reader is travelling, +1 down the page and -1 back up.
-  // The window and the loader's priority lane both read it.
-  var travel = 1, lastY = 0;
+  var shownY = 0, velY = 0, lastT = 0, running = false, hintHidden = false;
+  var lastW = -1, lastH = -1, lastWant = -1, lastPos = -1;
 
   function clock() {
     return (window.performance && performance.now) ? performance.now() : Date.now();
   }
 
-  // The frame the canvas is actually showing — the nearer of the two when
-  // it is between them, or whatever paintable() fell back to when the
-  // loader had not reached it — and whether the descent strip or the
-  // closing bit is the thing currently up.
-  var drewFrom = -1, stripUp = false, bitUp = false, lastBit = -1;
-
-  // Whether what is on the canvas was drawn with the good filter. See
-  // sharp(): false after any paint made on the move.
-  var drewSharp = false;
-
-  var FOLLOW_MS = 40;     // time constant of the picture following the scroll
-  var REST_MS   = 60;     // the scroll is still for this long: come to rest
-  var REST_PX   = 1.5;    // and this much movement is not movement
-  var REST_SPEED = 30;    // px a second; slower than this is a scroll dying away
-  var SNAP_MS   = 60;     // time constant of easing onto the nearer frame
-  var JUMP      = 2.5;    // screens; a gap bigger than this is cut, not travelled
-
-  var shownY = 0, lastT = 0, running = false;
-  var restY = 0, restT = 0, restMark = 0, restOn = -1, snap = 0;
-
-  // Flying or not, with a gap between the two thresholds so a scroll
-  // sitting on one of them does not trade sources on every tick.
-  var flying = false;
-
   function kick() {
     if (!running) { running = true; requestAnimationFrame(tick); }
+  }
+
+  // The exact step of a critically damped spring towards y: stable at any
+  // frame rate, and it cannot overshoot.
+  function follow(y, dt) {
+    if (!GLIDE) { shownY = y; velY = 0; return; }
+    var gap = y - shownY;
+    if ((gap < 0 ? -gap : gap) > JUMP * M.glass) { shownY = y; velY = 0; return; }
+    var d = shownY - y, e = Math.exp(-GLIDE * dt), c = velY + GLIDE * d;
+    shownY = y + (d + c * dt) * e;
+    velY = (velY - GLIDE * c * dt) * e;
+    if (Math.abs(shownY - y) < 0.25 && Math.abs(velY) < 3) { shownY = y; velY = 0; }
   }
 
   function tick() {
@@ -2904,203 +2433,47 @@
     layout();
 
     var now = clock();
-    tickNow = now;
-    revealing = false;
-    // Milliseconds since the last tick. Capped, so a tab coming back from
-    // the background does not arrive with one enormous step, and assumed
-    // to be one frame when the loop is starting from parked.
-    var dt = lastT ? now - lastT : 16.7;
-    if (dt > 100) { dt = 100; } else if (dt < 1) { dt = 1; }
+    var dt = lastT ? (now - lastT) / 1000 : 1 / 60;
+    if (dt > 0.1) { dt = 0.1; } else if (dt < 0.001) { dt = 0.001; }
     lastT = now;
 
     var y = clamp(scrollTop(), 0, M.maxScroll);
-    if (y > lastY) { travel = 1; } else if (y < lastY) { travel = -1; }
-    lastY = y;
+    if (!ready) { y = 0; }
+    follow(y, dt);
 
-    // Has the scroll actually gone anywhere since it last stopped? And if
-    // it has, was that travel or the last of a flick dying away? A scroll
-    // creeping its final few pixels is not a reader moving, and treating it
-    // as one would have the picture let go of the frame it had just come
-    // to rest on, drift, and settle again — twice or three times over, at
-    // the end of every swipe. Below REST_SPEED the rest simply carries on.
-    //
-    // The time it is divided by is capped at a quarter of a second. The
-    // first pixels of a new swipe would otherwise be divided by however
-    // long the page had been sitting there, and read as the slowest creep
-    // there ever was.
-    var went = y > restY ? y - restY : restY - y;
-    if (went > REST_PX) {
-      var span = now - restMark;
-      if (span > 250) { span = 250; }
-      var crept = span > 0 && went * 1000 / span < REST_SPEED;
-      restY = y; restMark = now;
-      if (!crept) { restT = now; restOn = -1; }
+    var pos = filmPos(shownY);
+    var want = clamp(Math.round(pos), 0, FILM.frames - 1);
+    if (want !== lastWant) { film.dir = want > lastWant ? 1 : -1; }
+    // How fast the picture is going through the film, frames a second,
+    // smoothed over about a tenth of a second.
+    var inst = lastPos < 0 ? 0 : Math.abs(pos - lastPos) / dt;
+    film.speed += (inst - film.speed) * (1 - Math.exp(-dt / 0.1));
+    lastPos = pos;
+    lastWant = want;
+    film.want = want;
+
+    if (film.mode === 'codec') { schedule(); watchDecoder(now); }
+    else if (film.mode === 'video') { seekVideo(want); }
+
+    if (resized || cw !== lastW || ch !== lastH) { film.shown = -1; lastW = cw; lastH = ch; }
+    var exact = paintFilm(want);
+    if (film.painted) {
+      if (!ready) { progress(); }   // the page opens on the frame just painted
+      retirePoster();
     }
 
-    var gap = y - shownY;
-    var agap = gap < 0 ? -gap : gap;
-    if (agap < 0.25 || agap > JUMP * M.glass) {
-      // Arrived — or the page has been thrown somewhere else entirely, by
-      // the End key or a scrollbar, and walking every frame in between
-      // would only be several hundred decodes nobody is going to see.
-      shownY = y; agap = 0;
-    } else {
-      shownY += gap * (1 - Math.exp(-dt / FOLLOW_MS));
-    }
-    var following = shownY !== y;
-    var atRest = (now - restT >= REST_MS) && agap <= REST_PX;
+    // The captions and the mark ride on the picture; the crossing into the
+    // closing section rides on the page, which is what scrolls under it.
+    overlay(shownY, y);
 
-    /* Which of the four owns the canvas, read off where the picture is:
-       the strip of frames down to the end of its held screen, then the
-       descent and the screen its foot is held for, then the tail, then
-       the closing bit. */
-    var onBit   = shownY > M.tailEnd;
-    var onTail  = !onBit && shownY > M.holdEnd;
-    var onStrip = !onBit && !onTail && shownY > M.descentStart;
-    var onFrames = !onBit && !onStrip;
-
-    // The frame position, for the two blocks that are made of frames.
-    var base = onTail ? TAIL_BASE : 0;
-    var pos = 0, settling = false;
-    if (onFrames) {
-      pos = onTail ? posIn(TKNOT, (shownY - M.holdEnd) / (M.tailEnd - M.holdEnd))
-                   : posIn(KNOT, shownY / M.animEnd);
-      var top = onTail ? TAIL_TOTAL - 1 : TOTAL - 1;
-
-      // At rest the picture belongs on a frame. Which one is decided as
-      // the rest begins and then kept until the scroll is most of a step
-      // away from it: a thumb trembling on the line between two would
-      // otherwise have it trading one for the other.
-      var goal = 0;
-      if (atRest) {
-        var on = restOn - base;
-        if (restOn < 0 || on < 0 || on > top || pos - on > 0.75 || on - pos > 0.75) {
-          // Onward, not back. The nearer frame is behind the playhead half
-          // the time, and settling onto it is the picture reversing at the
-          // end of a swipe; carried on to the next one it is the swipe
-          // running out. Unless the frame behind is a hair away — then the
-          // hair is not worth most of a step.
-          var lower = Math.floor(pos), frac = pos - lower;
-          on = travel > 0 ? (frac < 0.4 ? lower : lower + 1)
-                          : (frac > 0.6 ? lower + 1 : lower);
-          if (on > top) { on = top; }
-          restOn = base + on;
-        }
-        goal = on - pos;
-      }
-
-      var off = goal - snap;
-      // A hundredth of a step is well under a pixel of picture.
-      if (off < 0.01 && off > -0.01) { snap = goal; }
-      else { snap += off * (1 - Math.exp(-dt / SNAP_MS)); }
-
-      if (atRest && snap === goal) {
-        pos = restOn - base;
-      } else {
-        pos = clamp(pos + snap, 0, top);
-        settling = true;      // not there yet, or not yet allowed to be
-      }
-    } else {
-      snap = 0;
-    }
-
-    // One playhead in the slot space the loader and the window both work
-    // in, so neither has to know which block is on screen. Standing on the
-    // descent it is the strip's own slot, which sits between the two
-    // blocks — exactly where a window spanning the handover wants to be
-    // centred.
-    var slot = onBit ? JAMB_SLOT
-                     : (onStrip ? TOTAL : base + Math.round(pos));
-
-    // Keep the window of bitmaps around the playhead, and the bytes
-    // coming in the direction of travel. Throttled inside.
-    tend(slot, now);
-
-    // Off the raw scroll, not off the followed one: the captions fade on
-    // where the page is, and have no stills to step between.
-    overlay(y);
-
-    var sized = resized || cw !== lastW || ch !== lastH;
-
-    // On the move, or standing. A picture painted on the move and now
-    // being stood on is painted once more, properly, before the loop parks.
-    var moving = following || settling;
-    var soft = !moving && !drewSharp;
-    sharp(!moving);
-
-    if (onBit) {
-      // A flat division of its own stretch — see measure() for why nothing
-      // else would do here. bitUp is false while either still is on the
-      // wire. Keyed on the position itself, because unlike a frame index
-      // this moves continuously and every value of it is a different
-      // picture.
-      var tB = clamp((shownY - M.tailEnd) / (M.bitEnd - M.tailEnd), 0, 1);
-      if (tB !== lastBit || sized || soft || !bitUp) {
-        bitUp = drawBit(tB);
-        // Neither still has arrived: hold the last frame of the tail
-        // rather than dropping to black under the reader.
-        drewFrom = bitUp ? JAMB_SLOT : draw(TAIL_LAST);
-        if (drewFrom >= 0) { retirePoster(); }
-        stripUp = false; drewSharp = !moving;
-        lastBit = tB; lastPos = -1; lastYOff = -1;
-        lastW = cw; lastH = ch;
-      }
-    } else if (onStrip) {
-      // Eased, not linear. The block used to be a flat 450vh in which the
-      // window crawled down 2639px of concrete at one rate, and it read as
-      // long and mechanical — a fight with the floor rather than a look at
-      // it. It is 300vh now, and the window enters slowly, crosses the
-      // middle quickly and brakes into the hold.
-      //
-      // The easing is on the position, not on the rate, so both ends are
-      // untouched: easeInOut(0) is 0 and easeInOut(1) is 1, so yOff still
-      // starts at 0 and still finishes at STRIP_TRAVEL exactly, and it
-      // stays there for the whole of the hold below the descent.
-      var tD = clamp((shownY - M.descentStart) / (M.descentEnd - M.descentStart), 0, 1);
-      var yOff = easeInOut(tD) * STRIP_TRAVEL;
-      // stripUp is false while the strip is still on the wire, and the
-      // reader can be down here before it lands now that the page unlocks
-      // on 16 frames. Redraw on every tick until it does.
-      if (yOff !== lastYOff || sized || soft || !stripUp) {
-        stripUp = drawStrip(yOff);
-        // Nothing to walk down yet: hold the last frame of the journey
-        // rather than dropping to black under the reader.
-        drewFrom = stripUp ? TOTAL : draw(TOTAL - 1);
-        if (drewFrom >= 0) { retirePoster(); }
-        bitUp = false; lastBit = -1; drewSharp = !moving;
-        lastYOff = yOff; lastPos = -1; lastW = cw; lastH = ch;
-      }
-    } else {
-      // One number for "what is on screen", across both blocks.
-      var key = base + pos;
-      if (key !== lastPos || !drewExact || sized || soft) {
-        // Frames gone by since the last paint, as a rate per sixtieth of a
-        // second so that it means the same thing on a 120Hz screen.
-        var stepped = lastPos < 0 ? 0 : (key > lastPos ? key - lastPos : lastPos - key);
-        stepped = stepped * 16.7 / dt;
-        if (flying) { if (stepped < FAST_OUT) { flying = false; } }
-        else if (stepped > FAST_IN) { flying = true; }
-        if (!moving) { flying = false; }
-        // drewFrom is the frame actually painted. Keeping it, rather than
-        // the one that was asked for, is what makes the picture correct
-        // itself the moment the real frame arrives instead of staying on
-        // the fallback.
-        drewFrom = drawAt(base, pos, flying);
-        if (drewFrom >= 0) { retirePoster(); }
-        stripUp = false; bitUp = false; lastBit = -1; drewSharp = !moving;
-        lastPos = key; lastYOff = -1; lastW = cw; lastH = ch;
-      }
-    }
-
-    // The hint answers "has the finger moved at all", so it reads the raw
-    // scroll rather than the followed value — otherwise it would linger.
     if (ready && !hintHidden && y > 6) {
       hintHidden = true;
       hint.className = 'hide';
     }
 
-    if (following || settling || revealing) { requestAnimationFrame(tick); }
-    else { running = false; lastT = 0; }
+    if (shownY !== y || !exact || film.busy || (film.mode === 'video' && film.video && film.video.seeking)) {
+      requestAnimationFrame(tick);
+    } else { running = false; lastT = 0; }
   }
 
   /* ---- scroll lock while loading ------------------------------------ */
@@ -3113,6 +2486,9 @@
     window.addEventListener('wheel', block, { passive: false });
   }
 
+  var stall = null;
+  var loadT0 = 0;
+
   function unlock() {
     if (ready) { return; }
     ready = true;
@@ -3123,287 +2499,32 @@
     bar.className = 'done';
     hint.className = 'show';
     measure();
-    layout();              // the frames are in now, so their aspect is known
-    lastPos = -1;          // force one repaint at the new metrics
-    drewFrom = -1;
-    drewExact = false;
-    drewSharp = false;
-    // Read off window.__unlockMs when measuring the wait; the loader keeps
-    // running behind this and the number would otherwise be unobservable.
-    window.__unlockMs = Math.round((window.performance && performance.now
-                                    ? performance.now() : Date.now()) - loadT0);
+    layout();
+    window.__unlockMs = Math.round(clock() - loadT0);
     kick();                // the loop may have parked while the page was locked
   }
 
-  /* ---- the loader -------------------------------------------------------
-     Everything that touches bytes happens in a worker: the downloads, the
-     decoding, and keeping the encoded bytes of every frame for the life
-     of the page. The main thread receives finished bitmaps and nothing
-     else.
+  /* The page opens once the start of the film is in: the bytes of its
+     first UNLOCK_VH of scroll, with the first frame on the canvas. The
+     rest keeps coming down behind an open page, far faster than anyone
+     scrolls. */
+  var UNLOCK_VH = 90;
 
-     It is built this way for Safari. Drawing an <img> onto a canvas there
-     decodes it on the main thread, every time the decoded picture has
-     been thrown away — and on a phone, with a page this size, it is
-     thrown away constantly. img.decode() does not help on its own, and
-     createImageBitmap(blob) on the main thread decodes on the main
-     thread too. What does not block, in Safari and in Chrome both, is
-     createImageBitmap inside a worker with the bitmap handed across. So
-     that is the path, and the page checks at boot that it actually works
-     here before relying on it: a browser that cannot make a bitmap in a
-     worker, or cannot hand one across, gets the bytes instead and makes
-     the picture the slow way on the main thread, which is where the page
-     was before any of this.
-
-     Order on the wire: the first GATE frames, then the light copy — the
-     lock waits for the first LITE_GATE sheets of it and the rest follow
-     straight after, ahead of everything, because they are what makes
-     the whole page scrollable; then the frames the playhead is asking
-     for (the urgent lane, nearest first in the direction of travel); then
-     every slot on the page in order. PAR requests at a time — the host is
-     HTTP/2, so they share a connection.
-
-     The lock waits for the light copy only as far as the terrace: that
-     is further than anyone scrolls in the two seconds the rest of it
-     takes to come down behind an unlocked page, and it halves the wait.
-  ------------------------------------------------------------------ */
-  var GATE = Math.min(16, TOTAL);   // the lock is held for these frames...
-  var LITE_GATE = Math.min(24, LITE_COUNT);   // ...and these sheets: the facade to the terrace
-  var LOAD_PAR = 8;
-
-  var stall    = null;
-  var loadT0   = 0;
-  var gateGot  = 0, liteGotN = 0;
-  var failed   = new Array(LAST_SLOT + 1);
-
-  // The slot space in one function: the journey, then the strip, then the
-  // tail, then the two stills.
-  function slotUrl(i) {
-    if (i < TOTAL)       { return urls[i]; }
-    if (i === TOTAL)     { return STRIP_SRC; }
-    if (i === TERR_SLOT) { return TERR_SRC; }
-    if (i === JAMB_SLOT) { return JAMB_SRC; }
-    return tailUrls[i - TAIL_BASE];
-  }
-
-  function liteUrl(k) { return 'lite/' + (k < 10 ? '0' : '') + k + '.webp'; }
-
-  /* The worker. Written as a string so the page stays one file; it is
-     plain enough to also run on the main thread, through the shim below,
-     in a browser with no workers. */
-  var LOADER_SRC = [
-    "'use strict';",
-    "var base = '', slots = [], lites = [], blobs = [], liteBlobs = [];",
-    "var urgent = [], liteAt = 0, walkAt = 0, inFlight = 0, PAR = 8, gate = 16;",
-    "var busy = [], liteBusy = [], mode = '', pendingMakes = [];",
-    "function url(p) { return new URL(p, base).href; }",
-    "function pick() {",
-    "  var i;",
-    "  while (walkAt < gate && walkAt < slots.length) { i = walkAt++; if (!blobs[i] && !busy[i]) { return ['slot', i]; } }",
-    "  while (liteAt < lites.length) { i = liteAt++; if (!liteBlobs[i] && !liteBusy[i]) { return ['lite', i]; } }",
-    "  while (urgent.length) { i = urgent.shift(); if (!blobs[i] && !busy[i]) { return ['slot', i]; } }",
-    "  while (walkAt < slots.length) { i = walkAt++; if (!blobs[i] && !busy[i]) { return ['slot', i]; } }",
-    "  return null;",
-    "}",
-    "function pump() {",
-    "  while (inFlight < PAR) {",
-    "    var p = pick(); if (!p) { return; }",
-    "    start(p[0], p[1]);",
-    "  }",
-    "}",
-    "function start(kind, i) {",
-    "  var lite = kind === 'lite';",
-    "  (lite ? liteBusy : busy)[i] = true;",
-    "  inFlight++;",
-    "  fetch(url(lite ? lites[i] : slots[i])).then(function (r) {",
-    "    if (!r.ok) { throw new Error('http ' + r.status); }",
-    "    return r.blob();",
-    "  }).then(function (b) {",
-    "    (lite ? liteBlobs : blobs)[i] = b;",
-    "    (lite ? liteBusy : busy)[i] = false;",
-    "    inFlight--;",
-    "    self.postMessage({ got: i, kind: kind });",
-    "    pump();",
-    "  }, function () {",
-    "    (lite ? liteBusy : busy)[i] = false;",
-    "    inFlight--;",
-    "    self.postMessage({ fail: i, kind: kind });",
-    "    pump();",
-    "  });",
-    "}",
-    "function send(kind, i, bm, b) {",
-    "  if (bm) {",
-    "    try { self.postMessage({ made: i, kind: kind, bmp: bm, w: bm.width, h: bm.height }, [bm]); return; }",
-    "    catch (e) { try { bm.close(); } catch (e2) {} }",
-    "  }",
-    "  self.postMessage({ made: i, kind: kind, blob: b || null });",
-    "}",
-    "function make(kind, i) {",
-    "  if (!mode) { pendingMakes.push([kind, i]); return; }",
-    "  var b = (kind === 'lite' ? liteBlobs : blobs)[i];",
-    "  if (!b) { self.postMessage({ made: i, kind: kind, blob: null }); return; }",
-    "  if (mode !== 'bitmap') { send(kind, i, null, b); return; }",
-    "  var p;",
-    "  try { p = self.createImageBitmap(b); } catch (e) { send(kind, i, null, b); return; }",
-    "  p.then(function (bm) { send(kind, i, bm, b); }, function () { send(kind, i, null, b); });",
-    "}",
-    "function probe() {",
-    "  var png = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');",
-    "  var a = new Uint8Array(png.length), k;",
-    "  for (k = 0; k < png.length; k++) { a[k] = png.charCodeAt(k); }",
-    "  var p;",
-    "  try { p = self.createImageBitmap(new Blob([a], { type: 'image/png' })); }",
-    "  catch (e) { self.postMessage({ probe: 1, bmp: null }); return; }",
-    "  p.then(function (bm) {",
-    "    try { self.postMessage({ probe: 1, bmp: bm }, [bm]); }",
-    "    catch (e) { self.postMessage({ probe: 1, bmp: null }); }",
-    "  }, function () { self.postMessage({ probe: 1, bmp: null }); });",
-    "}",
-    "self.onmessage = function (e) {",
-    "  var d = e.data;",
-    "  if (d.init) { base = d.base; slots = d.slots; lites = d.lites; PAR = d.par; gate = d.gate; probe(); pump(); }",
-    "  else if (d.mode) { mode = d.mode; var q = pendingMakes; pendingMakes = []; for (var k = 0; k < q.length; k++) { make(q[k][0], q[k][1]); } }",
-    "  else if (d.urgent) { urgent = d.urgent; pump(); }",
-    "  else if (d.make !== undefined) { make(d.kind, d.make); }",
-    "};"
-  ].join('\n');
-
-  var loader = null;        // the worker, or the shim standing in for one
-  var loaderMode = '';      // 'bitmap': the worker makes them; 'blob': this thread does
-  var lastUrgent = '';
-  var probeTimer = null;
-  var flags = String(location.search || '');
-  var noWorker  = flags.indexOf('maker=shim') >= 0;
-  var noBitmap  = flags.indexOf('maker=img') >= 0;
-  var mainMaker = flags.indexOf('maker=main') >= 0 || noBitmap;
-
-  function loaderPost(msg) {
-    if (loader) { loader.postMessage(msg); }
-  }
-
-  function loaderUrgent(list) {
-    var key = list.join(',');
-    if (key === lastUrgent) { return; }
-    lastUrgent = key;
-    loaderPost({ urgent: list });
-  }
-
-  function loaderMake(kind, i) {
-    loaderPost({ make: i, kind: kind });
-  }
-
-  function setMode(m) {
-    if (loaderMode) { return; }
-    loaderMode = m;
-    if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
-    loaderPost({ mode: m });
-  }
-
-  /* The slow way: an <img> from the bytes, decoded, and then a bitmap
-     from the <img> — which is the one route Safari takes off the main
-     thread when it is not in a worker. A browser with no
-     createImageBitmap at all keeps the <img> and draws that. */
-  function makeOnMain(kind, i, blob) {
-    if (!blob) { landed(kind, i, null, 0, 0); return; }
-    var u = URL.createObjectURL(blob), img = new Image();
-    img.decoding = 'async';
-    img.onload = function () {
-      var w = img.naturalWidth, h = img.naturalHeight;
-      var asImg = function () { img.__url = u; landed(kind, i, img, w, h); };
-      var toBitmap = function () {
-        if (noBitmap || typeof window.createImageBitmap !== 'function') { asImg(); return; }
-        window.createImageBitmap(img).then(function (b) {
-          URL.revokeObjectURL(u);
-          b.__name = img.__name;
-          landed(kind, i, b, w, h);
-        }, asImg);
-      };
-      img.__name = kind === 'lite' ? liteUrl(i) : slotUrl(i);
-      if (typeof img.decode === 'function') { img.decode().then(toBitmap, toBitmap); }
-      else { toBitmap(); }
-    };
-    img.onerror = function () { URL.revokeObjectURL(u); landed(kind, i, null, 0, 0); };
-    img.src = u;
-  }
-
-  function onLoader(d) {
-    var i = d.got !== undefined ? d.got : (d.fail !== undefined ? d.fail : -1);
-    if (d.probe) {
-      var ok = !!(d.bmp && typeof ImageBitmap !== 'undefined' && d.bmp instanceof ImageBitmap);
-      if (ok && typeof d.bmp.close === 'function') { d.bmp.close(); }
-      setMode(ok && !mainMaker ? 'bitmap' : 'blob');
-      return;
+  function progress() {
+    if (ready) { return; }
+    var need, have;
+    if (film.mode === 'video') {
+      var v = film.video;
+      need = 1; have = (v && v.readyState >= 3) ? 1 : 0.3;
+    } else {
+      var n = Math.min(FILM.frames, Math.round(UNLOCK_VH * FILM.D) + FILM.gop);
+      need = film.off[n] - film.off[0];
+      have = Math.max(0, film.loaded - film.off[0]);
     }
-    if (i >= 0) {
-      if (d.kind === 'lite') {
-        liteGot[i] = d.got !== undefined;
-        if (i < LITE_GATE) { liteGotN++; }
-      } else {
-        got[i] = d.got !== undefined;
-        failed[i] = d.fail !== undefined;
-        if (i < GATE) { gateGot++; }
-        // A frame the window wants that has just arrived: make it now, not
-        // at the next tend.
-        if (got[i]) { topUp(tendSlot < -1e8 ? 0 : tendSlot); }
-      }
-      if (!ready) {
-        bar.style.width = (((gateGot + liteGotN) / (GATE + LITE_GATE)) * 100).toFixed(2) + '%';
-        if (stall) { clearTimeout(stall); stall = null; }
-        if (gateGot >= GATE && liteGotN >= LITE_GATE) { unlock(); }
-        else { stall = setTimeout(unlock, 25000); }   // nothing for 25s: stop holding the page
-      }
-      kick();
-      return;
-    }
-    if (d.made !== undefined) {
-      if (d.bmp) {
-        d.bmp.__name = d.kind === 'lite' ? liteUrl(d.made) : slotUrl(d.made);
-        landed(d.kind, d.made, d.bmp, d.w, d.h);
-      } else {
-        makeOnMain(d.kind, d.made, d.blob);
-      }
-    }
-  }
-
-  /* The shim: the same loader code, on this thread, for a browser with no
-     Worker. Messages are delivered on a timer so that nothing re-enters. */
-  function shimLoader() {
-    var selfLike = {
-      postMessage: function (msg) { setTimeout(function () { onLoader(msg); }, 0); },
-      createImageBitmap: (typeof window.createImageBitmap === 'function')
-        ? function (b) { return window.createImageBitmap(b); } : undefined,
-      onmessage: null
-    };
-    /* jshint evil:true */
-    new Function('self', 'fetch', 'Blob', 'atob', 'URL', LOADER_SRC)(selfLike, window.fetch.bind(window), Blob, window.atob.bind(window), URL);
-    return {
-      postMessage: function (msg) {
-        var m = msg;
-        setTimeout(function () { selfLike.onmessage({ data: m }); }, 0);
-      }
-    };
-  }
-
-  function startLoader() {
-    var lites = [], k;
-    for (k = 0; k < LITE_COUNT; k++) { lites.push(liteUrl(k)); }
-    var slotsList = [];
-    for (k = 0; k <= LAST_SLOT; k++) { slotsList.push(slotUrl(k)); }
-
-    if (!noWorker && typeof Worker === 'function' && typeof Blob === 'function' && window.URL && URL.createObjectURL) {
-      try {
-        var w = new Worker(URL.createObjectURL(new Blob([LOADER_SRC], { type: 'text/javascript' })));
-        w.onmessage = function (e) { onLoader(e.data); };
-        w.onerror = function () { if (!loaderMode) { setMode('blob'); } };
-        loader = w;
-      } catch (e) { loader = null; }
-    }
-    if (!loader) { loader = shimLoader(); }
-
-    // The probe answers in a few milliseconds. If it never does, the slow
-    // path is the safe one.
-    probeTimer = setTimeout(function () { setMode('blob'); }, 2500);
-
-    loaderPost({ init: 1, base: location.href, slots: slotsList, lites: lites, par: LOAD_PAR, gate: GATE });
+    var p = need > 0 ? Math.min(1, have / need) : 0;
+    bar.style.width = (p * 100).toFixed(2) + '%';
+    if (p >= 1 && film.painted) { unlock(); }
+    else if (p >= 1) { kick(); setTimeout(progress, 50); }
   }
 
   /* ---- boot ---------------------------------------------------------- */
@@ -3415,8 +2536,9 @@
   measure();
   resize();
   smoothing();          // resize() only sets it when the size actually changes
-  loadT0 = (window.performance && performance.now) ? performance.now() : Date.now();
-  drewFrom = -1;
+  loadT0 = clock();
+  // Nothing at all for 25s: stop holding the page.
+  stall = setTimeout(unlock, 25000);
 
   // Anything that can move the picture has to be able to wake the loop.
   window.addEventListener('scroll', kick, { passive: true });
@@ -3425,8 +2547,9 @@
     setTimeout(function () { measure(); kick(); }, 250);
   });
 
-  startLoader();
+  startFilm();
   kick();
+
 
   /* ==================================================================
      The closing section.
